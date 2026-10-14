@@ -1,6 +1,6 @@
 # easyWrapper
 
-A minimal wrapped-style analytics project for CSV listening history, inspired by Spotify and Last.fm. It reads a CSV like the sample at the repo root, calculates top artists/tracks, and can optionally enrich songs with Spotify Audio Features metadata such as tempo, danceability, energy, valence, and acousticness.
+A minimal wrapped-style analytics project for CSV listening history, inspired by Spotify and Last.fm. It reads a CSV like the sample at the repo root, calculates top artists and tracks, and saves a polished PDF report that feels like a Spotify Wrapped summary.
 
 The repo is intentionally built to accept the sample export format that does not include a header row. Each row is expected to be: artist, album, track, timestamp.
 
@@ -11,7 +11,7 @@ The repo is intentionally small and opinionated:
 - It is designed for personal listening-history exports.
 - It accepts headerless CSVs like the attached sample, as well as headered exports when present.
 - It avoids heavy ML dependencies.
-- It gives a fast baseline wrapped summary without needing a full music recommendation stack.
+- It produces a wrapped-style PDF report rather than a notebook-first workflow.
 - It supports optional metadata enrichment from Spotify when you have developer credentials.
 
 ## Research notes
@@ -26,6 +26,7 @@ For a bare-minimum API option, Spotify is the best fit:
 
 - `main.py` – entry point for the wrapped workflow
 - `src/easywrapper/loader.py` – CSV parsing and summary logic
+- `src/easywrapper/report_generator.py` – creates the Spotify-like PDF report
 - `src/easywrapper/spotify_client.py` – optional Spotify enrichment
 - `src/easywrapper/models.py` – data types
 
@@ -42,6 +43,8 @@ pip install -r requirements.txt
 python main.py coletoliva.csv
 ```
 
+This generates a PDF file next to the CSV, such as `coletoliva_wrapped_report.pdf`.
+
 ## Optional Spotify enrichment
 
 Set these environment variables or copy `.env.example`:
@@ -54,7 +57,7 @@ SPOTIFY_CLIENT_SECRET=your_client_secret
 Then run:
 
 ```bash
-python main.py coletoliva.csv --enrich
+python main.py coletoliva.csv --enrich --output wrapped.pdf
 ```
 
 This will try to match each song against the Spotify catalog and fetch audio features such as:
@@ -69,23 +72,15 @@ This will try to match each song against the Spotify catalog and fetch audio fea
 
 ## Example output
 
-```json
-{
-  "total_tracks": 120,
-  "unique_artists": 32,
-  "top_artists": [
-    {"artist": "Laufey", "plays": 12},
-    {"artist": "Faye Webster", "plays": 9}
-  ],
-  "top_tracks": [
-    {"artist": "Laufey", "track": "Misty", "plays": 4}
-  ],
-  "listening_window": {
-    "first": "2026-10-11T00:00:00",
-    "last": "2026-10-14T22:49:00"
-  }
-}
-```
+The PDF includes:
+
+- your total listens
+- top artist and top tracks
+- most active day
+- listening range
+- optional Spotify audio-vibe cards
+
+A JSON summary is still available with `--json` if you want the raw stats in the terminal.
 
 ## Notes on "melodic complexity"
 

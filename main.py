@@ -10,14 +10,20 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from easywrapper.loader import build_wrapped_summary, load_listening_history
+from easywrapper.report_generator import generate_report
 from easywrapper.spotify_client import SpotifyAudioClient
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Generate a basic wrapped summary from CSV listening history."
+        description="Generate a wrapped-style PDF report from CSV listening history."
     )
     parser.add_argument("csv_path", help="Path to a CSV file with artist, album, track, and timestamp columns.")
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="Path to write the PDF report to. Defaults to a <name>_wrapped_report.pdf file next to the CSV.",
+    )
     parser.add_argument(
         "--enrich",
         action="store_true",
@@ -32,6 +38,11 @@ def parse_args():
         "--client-secret",
         default=os.getenv("SPOTIFY_CLIENT_SECRET"),
         help="Optional Spotify client secret (or set SPOTIFY_CLIENT_SECRET in the environment).",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the structured JSON summary in addition to saving the wrapped PDF report.",
     )
     return parser.parse_args()
 
@@ -49,7 +60,13 @@ def main():
             spotify_client = None
 
     summary = build_wrapped_summary(events, spotify_client=spotify_client)
-    print(json.dumps(summary, indent=2, ensure_ascii=False))
+
+    output_path = Path(args.output) if args.output else Path(args.csv_path).with_name(f"{Path(args.csv_path).stem}_wrapped_report.pdf")
+    report_path = generate_report(summary, output_path)
+
+    print(f"Wrapped PDF report saved to: {report_path}")
+    if args.json:
+        print(json.dumps(summary, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
