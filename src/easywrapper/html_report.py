@@ -101,12 +101,12 @@ def generate_html_report(summary: dict, events: list[dict], output_path: str | P
       .stat-card { background: var(--panel); border-radius: 18px; padding: 18px; box-shadow: var(--shadow); }
       .stat-card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
       .stat-card .value { font-size: 30px; font-weight: 800; margin-top: 8px; }
-      .grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 18px; margin-top: 20px; }
-      .chart-panel, .table-panel, .insights { background: var(--panel); border-radius: 18px; padding: 18px; box-shadow: var(--shadow); }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; margin-top: 20px; }
+      .chart-panel, .table-panel, .insights { background: var(--panel); border-radius: 18px; padding: 18px; box-shadow: var(--shadow); overflow: hidden; }
       .chart-panel h3, .table-panel h3, .insights h3 { margin-top: 0; margin-bottom: 12px; }
-      table { width: 100%; border-collapse: collapse; font-size: 14px; }
-      th, td { padding: 10px; border-bottom: 1px solid #e5e7eb; text-align: left; }
-      th { background: #f3f4f6; color: var(--muted); }
+      table { width: 100%; border-collapse: collapse; font-size: 14px; table-layout: fixed; }
+      th, td { padding: 10px; border-bottom: 1px solid #e5e7eb; text-align: left; vertical-align: top; word-break: break-word; }
+      th { background: #f3f4f6; color: var(--muted); width: 38%; }
       .empty-chart { background: var(--panel-alt); border: 1px dashed #d1d5db; border-radius: 12px; padding: 24px; color: var(--muted); text-align: center; }
       .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 50; }
       .modal.open { display: flex; align-items: center; justify-content: center; }
@@ -169,7 +169,6 @@ def generate_html_report(summary: dict, events: list[dict], output_path: str | P
 
       <div class='grid' style='margin-top: 18px;'>
         <div id='audioVibes'></div>
-        <div></div>
       </div>
     </div>
 
@@ -213,6 +212,118 @@ def generate_html_report(summary: dict, events: list[dict], output_path: str | P
           const ts = new Date(event.timestamp);
           return ts >= start && ts <= end;
         });
+      }
+
+      function average(values) {
+        if (!values.length) return 0;
+        return values.reduce((sum, value) => sum + value, 0) / values.length;
+      }
+
+      function buildMoodProfile(events, audioFeatures) {
+        const nightShare = events.length ? (events.filter(event => {
+          const hour = new Date(event.timestamp).getHours();
+          return hour >= 21 || hour < 5;
+        }).length / events.length) * 100 : 0;
+
+        const energyValues = audioFeatures.map(item => Number(item.energy ?? 0)).filter(value => Number.isFinite(value));
+        const valenceValues = audioFeatures.map(item => Number(item.valence ?? 0)).filter(value => Number.isFinite(value));
+        const tempoValues = audioFeatures.map(item => Number(item.tempo ?? 0)).filter(value => Number.isFinite(value));
+        const acousticValues = audioFeatures.map(item => Number(item.acousticness ?? 0)).filter(value => Number.isFinite(value));
+
+        const energy = energyValues.length ? average(energyValues) : 0.5 + Math.min(0.2, (nightShare / 100) * 0.2);
+        const valence = valenceValues.length ? average(valenceValues) : 0.52 + Math.min(0.15, (nightShare / 100) * 0.18);
+        const tempo = tempoValues.length ? average(tempoValues) : 90 + Math.min(30, nightShare * 0.3);
+        const acousticness = acousticValues.length ? average(acousticValues) : 0.45 + Math.min(0.2, (nightShare / 100) * 0.15);
+
+        const energyLabel = energy >= 0.7 ? 'High-energy' : energy >= 0.45 ? 'Balanced' : 'Low-key';
+        const valenceLabel = valence >= 0.7 ? 'Warm, bright' : valence >= 0.45 ? 'Balanced' : 'Reflective, moody';
+        const tempoLabel = tempo >= 120 ? 'Fast and driving' : tempo >= 90 ? 'Steady groove' : 'Slow burn';
+        const focusLabel = acousticness >= 0.6 ? 'Deep-focus' : acousticness >= 0.35 ? 'Blend of focus and mood' : 'Open and exploratory';
+
+        return {
+          energy: Number(energy.toFixed(3)),
+          energy_label: energyLabel,
+          valence: Number(valence.toFixed(3)),
+          valence_label: valenceLabel,
+          tempo: Number(tempo.toFixed(2)),
+          tempo_label: tempoLabel,
+          acousticness: Number(acousticness.toFixed(3)),
+          focus_label: focusLabel,
+          night_share: Number(nightShare.toFixed(1)),
+          night_share_label: nightShare >= 30 ? 'Night owl' : nightShare <= 15 ? 'Mostly daytime' : 'Balanced rhythm'
+        };
+      }
+
+      function buildCategories(events, audioFeatures, moodProfile) {
+        if (!events.length) return [];
+
+        const artistCounter = new Map();
+        const trackCounter = new Map();
+        for (const event of events) {
+          artistCounter.set(event.artist, (artistCounter.get(event.artist) || 0) + 1);
+          const key = `${event.artist}::${event.track}`;
+          trackCounter.set(key, (trackCounter.get(key) || 0) + 1);
+        }
+
+        const uniqueArtists = artistCounter.size;
+        const repeatedTracks = [...trackCounter.values()].filter(count => count > 1).length;
+        const repeatedShare = (repeatedTracks / Math.max(trackCounter.size, 1)) * 100;
+        const artistDensity = Math.min(100, Math.max(5, Math.round((uniqueArtists / Math.max(events.length, 1)) * 100 * 3)));
+        const nightScore = Math.min(100, Math.max(10, Math.round(moodProfile.night_share)));
+
+        return [
+          { name: 'Late-night drift', score: nightScore, description: `${moodProfile.night_share}% of your listening happens after dark.` },
+          { name: 'Replay habit', score: Math.min(100, Math.max(20, Math.round(repeatedShare * 2))), description: 'A few tracks keep replaying because they really match your mood.' },
+          { name: 'Artist range', score: artistDensity, description: `You span ${uniqueArtists} artists and keep your taste moving without needing to chase the obvious picks.` },
+          { name: 'Mood intensity', score: Math.min(100, Math.max(15, Math.round(moodProfile.energy * 100))), description: `Your signal feels ${moodProfile.energy_label.toLowerCase()} and emotionally tuned.` },
+          { name: 'Top window', score: Math.min(100, Math.max(15, Math.round((events.filter(event => { const hour = new Date(event.timestamp).getHours(); return hour >= 21 || hour < 5; }).length / events.length) * 100))), description: `Your strongest listening window leans ${new Date(events[0].timestamp).getHours() >= 21 || new Date(events[0].timestamp).getHours() < 5 ? 'night' : 'day'} and gives your sound its shape.` }
+        ];
+      }
+
+      function buildListenerProfile(events, moodProfile, categories) {
+        if (!events.length) {
+          return { archetype: 'Quiet observer', headline: 'No listening data yet.', summary: 'Once you have a few sessions, the profile will read your habits and mood more clearly.' };
+        }
+
+        const lateNight = moodProfile.night_share || 0;
+        const energy = moodProfile.energy_label || 'Balanced';
+        const valence = moodProfile.valence_label || 'Balanced';
+        const artistCount = new Set(events.map(event => event.artist)).size;
+        const trackCount = events.length;
+        const energyValue = Number(moodProfile.energy || 0.5);
+        const valenceValue = Number(moodProfile.valence || 0.5);
+
+        let archetype = 'The steady rhythm explorer';
+        let headline = 'You like a balance of momentum and feeling.';
+        let summary = `Your profile reads as balanced rather than extreme: energy ${energyValue.toFixed(2)}, valence ${valenceValue.toFixed(2)}, and a late-night share of ${lateNight.toFixed(1)}%. That mix suggests you are not chasing one mood alone; you are building a personal soundtrack that can move between reflection, motion, and comfort.`;
+
+        if (lateNight >= 35 && energy === 'High-energy') {
+          archetype = 'The night-drive curator';
+          headline = 'You turn the late hours into your own private soundtrack.';
+          summary = `Your listening pattern is strongly evening-weighted: about ${lateNight.toFixed(1)}% of your sessions happen after dark, with an energy read of ${energyValue.toFixed(2)} and a ${valence.toLowerCase()} tone. That combination commonly points to music used for emotional processing, focus, or a bit of motion after the day settles.`;
+        } else if (valence === 'Warm, bright') {
+          archetype = 'The warm-hearted romantic';
+          headline = 'Your taste feels cinematic, comforting, and a little nostalgic.';
+          summary = `You are leaning into warm, emotionally resonant music: valence sits around ${valenceValue.toFixed(2)}, and the collection spans ${artistCount} artists across ${trackCount} listens. This kind of profile is often associated with music that feels comforting, uplifting, and personally familiar.`;
+        } else if (energy === 'Low-key') {
+          archetype = 'The reflective wanderer';
+          headline = 'Your listening is quieter, more atmospheric, and intentional.';
+          summary = `The signal is more reflective than high-arousal: energy sits around ${energyValue.toFixed(2)}, valence is around ${valenceValue.toFixed(2)}, and roughly ${lateNight.toFixed(1)}% of plays happen late. That pattern often matches introspective, textural listening used to slow the pace down.`;
+        }
+
+        return {
+          archetype,
+          headline,
+          summary,
+          evidence: [
+            { label: 'Late-night share', value: `${lateNight.toFixed(1)}%`, detail: 'Research on music listening often links a strong evening signal to emotional regulation, routine, and lower-stimulation listening habits.' },
+            { label: 'Energy', value: energyValue.toFixed(2), detail: 'Values around this range usually signal balanced listening: not purely high-arousal, but also not sleep-like or fully ambient.' },
+            { label: 'Valence', value: valenceValue.toFixed(2), detail: 'This score indicates whether the music skews more reflective, moody, or warm and bright. Your pattern sits on the reflective-to-balanced side.' },
+            { label: 'Artist breadth', value: `${artistCount} artists`, detail: 'A broad artist footprint usually suggests exploratory taste rather than a narrow fixation on a single scene or mood.' }
+          ],
+          categories,
+          primary_trait: energy
+        };
       }
 
       function buildSummary(events) {
@@ -263,6 +374,10 @@ def generate_html_report(summary: dict, events: list[dict], output_path: str | P
           audioFeatures.push(audioFeatureMap.get(key));
         }
 
+        const moodProfile = buildMoodProfile(events, audioFeatures);
+        const categories = buildCategories(events, audioFeatures, moodProfile);
+        const listenerProfile = buildListenerProfile(events, moodProfile, categories);
+
         return {
           total_tracks: events.length,
           unique_artists: artistMap.size,
@@ -283,7 +398,10 @@ def generate_html_report(summary: dict, events: list[dict], output_path: str | P
             unique_days: new Set(events.map(event => event.timestamp.slice(0, 10))).size
           },
           monthly_trend: monthTrend,
-          audio_features: audioFeatures
+          audio_features: audioFeatures,
+          mood_profile: moodProfile,
+          analysis_categories: categories,
+          listener_profile: listenerProfile
         };
       }
 
@@ -322,18 +440,21 @@ def generate_html_report(summary: dict, events: list[dict], output_path: str | P
         const mood = summary.mood_profile || {};
         const headline = profile.headline || 'Your listening pattern is taking shape.';
         const narrative = profile.summary || 'Your recent sessions are being translated into a more personal listening profile.';
+        const evidence = Array.isArray(profile.evidence) ? profile.evidence : [];
         document.getElementById('listenerHeadline').textContent = headline;
         document.getElementById('listenerNarrative').textContent = narrative;
 
         const badges = (summary.analysis_categories || []).slice(0, 4).map(item => `<span class='chip'>${item.name}: ${item.score}%</span>`).join('');
         const totalListens = summary.total_tracks || 0;
         const artistCount = summary.unique_artists || 0;
+        const evidenceRows = evidence.length ? evidence.map(item => `<div><strong>${item.label}:</strong> ${item.value} — ${item.detail}</div>`).join('') : '';
         document.getElementById('moodSummary').innerHTML = `
           <div><strong>Energy:</strong> ${mood.energy_label || 'Balanced'} (${Number(mood.energy || 0.5).toFixed(2)})</div>
           <div><strong>Vibe:</strong> ${mood.valence_label || 'Balanced'}</div>
           <div><strong>Tempo:</strong> ${mood.tempo_label || 'Steady groove'} (${Number(mood.tempo || 95).toFixed(0)} BPM)</div>
           <div><strong>Pattern:</strong> ${totalListens} listens across ${artistCount} artists</div>
           <div class='chip-row'>${badges || '<span class="chip">Early pattern</span>'}</div>
+          <div style='margin-top: 10px; line-height: 1.5;'>${evidenceRows}</div>
         `;
       }
 
@@ -343,7 +464,7 @@ def generate_html_report(summary: dict, events: list[dict], output_path: str | P
         const topTrack = summary.top_tracks?.[0];
         const topArtist = summary.top_artists?.[0];
         const share = summary.total_tracks ? Math.round(((topArtist?.plays || 0) / summary.total_tracks) * 100) : 0;
-        const categories = (summary.analysis_categories || []).slice(0, 5);
+        const categories = (summary.analysis_categories || []).slice(0, 3);
         const insights = [
           ['Peak hour', `${time.peak_hour || 'N/A'} (${time.peak_hour_count || 0} plays)`],
           ['Most active weekday', Object.entries(time.day_of_week || {}).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A'],
@@ -352,9 +473,11 @@ def generate_html_report(summary: dict, events: list[dict], output_path: str | P
           ['Listening window', formatRangeLabel(summary.listening_window?.first, summary.listening_window?.last)],
           ['Top artist share', `${share}%`]
         ];
-        const audioRows = audio.length ? audio.map(item => `<tr><th>${item.track || 'Track'}</th><td>tempo ${item.tempo ?? 'N/A'} / energy ${item.energy ?? 'N/A'}</td></tr>`).join('') : '<tr><th>Local metrics</th><td>Audio analysis data is unavailable for this report. The dashboard still shows your live listening patterns from the CSV.</td></tr>';
-        const categoryRows = categories.length ? categories.map(item => `<tr><th>${item.name}</th><td>${item.score}% — ${item.description}</td></tr>`).join('') : '<tr><th>Profile</th><td>Your listening pattern is already forming. The early signal is strong enough to say this is a distinct, repeatable taste — even before the full picture settles.</td></tr>';
-        insightsPanel.innerHTML = `<div class='insights'><h3>Listening insights</h3><table>${insights.map(([label, value]) => `<tr><th>${label}</th><td>${value}</td></tr>`).join('')}</table><h3 style='margin-top:18px;'>Categories</h3><table>${categoryRows}</table><h3 style='margin-top:18px;'>Audio summary</h3><table>${audioRows}</table></div>`;
+        const audioRows = audio.length ? audio.slice(0, 2).map(item => `<tr><th>${item.track || 'Track'}</th><td>tempo ${item.tempo ?? 'N/A'} / energy ${item.energy ?? 'N/A'}</td></tr>`).join('') : '<tr><th>Audio summary</th><td>There is no enriched audio payload in this run, so the report is grounded in listening behavior itself.</td></tr>';
+        const categoryRows = categories.length ? categories.map(item => `<tr><th>${item.name}</th><td>${item.score}% — ${item.description}</td></tr>`).join('') : '<tr><th>Profile</th><td>Your listening pattern is already forming.</td></tr>';
+        const evidence = Array.isArray(summary.listener_profile?.evidence) ? summary.listener_profile.evidence.slice(0, 3) : [];
+        const evidenceRows = evidence.length ? evidence.map(item => `<tr><th>${item.label}</th><td>${item.value} — ${item.detail}</td></tr>`).join('') : '';
+        insightsPanel.innerHTML = `<div class='insights'><h3>Listening insights</h3><table>${insights.slice(0, 4).map(([label, value]) => `<tr><th>${label}</th><td>${value}</td></tr>`).join('')}</table><h3 style='margin-top:18px;'>Categories</h3><table>${categoryRows}</table><h3 style='margin-top:18px;'>Evidence</h3><table>${evidenceRows || '<tr><th>Profile</th><td>Signal is still forming.</td></tr>'}</table><h3 style='margin-top:18px;'>Audio summary</h3><table>${audioRows}</table></div>`;
       }
 
       function renderAudioVibes(summary) {

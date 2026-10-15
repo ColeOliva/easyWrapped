@@ -254,23 +254,63 @@ def _build_listener_profile(events: List[ListeningEvent], mood_profile: dict, an
     valence = mood_profile.get("valence_label", "Balanced")
     artist_count = len({event.artist for event in events})
     track_count = len(events)
+    energy_value = float(mood_profile.get("energy", 0.5))
+    valence_value = float(mood_profile.get("valence", 0.5))
+
+    valence_label = mood_profile.get("valence_label", "Balanced").lower()
 
     if late_night >= 35 and energy == "High-energy":
         archetype = "The night-drive curator"
         headline = "You turn the late hours into your own private soundtrack."
-        summary = f"Your {track_count} listens are leaning into late-night motion, with {artist_count} artists shaping a soundtrack that feels both alive and personal."
+        summary = (
+            "Your listening pattern is strongly evening-weighted: about "
+            f"{late_night}% of your sessions happen after dark, with an energy read of {energy_value:.2f} and a {valence_label} tone. "
+            "That combination commonly points to music used for emotional processing, focus, or a bit of motion after the day settles."
+        )
     elif valence == "Warm, bright":
         archetype = "The warm-hearted romantic"
         headline = "Your taste feels cinematic, comforting, and a little nostalgic."
-        summary = f"You keep returning to warmth and emotional detail, and your library reads like a personal love letter to good melodies."
+        summary = (
+            f"You are leaning into warm, emotionally resonant music: valence sits around {valence_value:.2f}, and the collection spans {artist_count} artists across {track_count} listens. "
+            "This kind of profile is often associated with music that feels comforting, uplifting, and personally familiar."
+        )
     elif energy == "Low-key":
         archetype = "The reflective wanderer"
         headline = "Your listening is quieter, more atmospheric, and intentional."
-        summary = f"Across {track_count} sessions, you prefer texture, space, and the kind of songs that feel like a late thought."
+        summary = (
+            f"The signal is more reflective than high-arousal: energy sits around {energy_value:.2f}, valence is around {valence_value:.2f}, and roughly {late_night}% of plays happen late. "
+            "That pattern often matches introspective, textural listening used to slow the pace down."
+        )
     else:
         archetype = "The steady rhythm explorer"
         headline = "You like a balance of momentum and feeling."
-        summary = f"Your taste sits in that sweet middle ground: enough motion to move, enough feeling to stick. It feels personal without trying too hard."
+        summary = (
+            f"Your profile reads as balanced rather than extreme: energy {energy_value:.2f}, valence {valence_value:.2f}, and a late-night share of {late_night}%. "
+            "That mix suggests you are not chasing one mood alone; you are building a personal soundtrack that can move between reflection, motion, and comfort."
+        )
+
+    evidence = [
+        {
+            "label": "Late-night share",
+            "value": f"{late_night}%",
+            "detail": "Research on music listening often links a strong evening signal to emotional regulation, routine, and lower-stimulation listening habits.",
+        },
+        {
+            "label": "Energy",
+            "value": f"{energy_value:.2f}",
+            "detail": "Values around this range usually signal balanced listening: not purely high-arousal, but also not sleep-like or fully ambient.",
+        },
+        {
+            "label": "Valence",
+            "value": f"{valence_value:.2f}",
+            "detail": "This score indicates whether the music skews more reflective, moody, or warm and bright. Your pattern sits on the reflective-to-balanced side.",
+        },
+        {
+            "label": "Artist breadth",
+            "value": f"{artist_count} artists",
+            "detail": "A broad artist footprint usually suggests exploratory taste rather than a narrow fixation on a single scene or mood.",
+        },
+    ]
 
     return {
         "archetype": archetype,
@@ -278,6 +318,7 @@ def _build_listener_profile(events: List[ListeningEvent], mood_profile: dict, an
         "summary": summary,
         "categories": analysis_categories,
         "primary_trait": mood_profile.get("energy_label", "Balanced"),
+        "evidence": evidence,
     }
 
 
