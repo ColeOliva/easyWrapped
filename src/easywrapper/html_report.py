@@ -89,6 +89,14 @@ def generate_html_report(summary: dict, events: list[dict], output_path: str | P
       .field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
       .field input, .field select { border: 1px solid #d1d5db; border-radius: 10px; padding: 10px 12px; font-size: 14px; background: white; }
       button { background: var(--accent); border: none; color: white; border-radius: 10px; padding: 10px 16px; font-weight: 700; cursor: pointer; }
+      .narrative-card { display: grid; grid-template-columns: 1.4fr 0.9fr; gap: 18px; background: linear-gradient(135deg, #ecfdf5, #e0f2fe); border-radius: 22px; padding: 22px; box-shadow: var(--shadow); margin-top: 22px; }
+      .eyebrow { text-transform: uppercase; letter-spacing: 0.1em; font-size: 11px; color: var(--muted); }
+      .narrative-card h2 { margin: 8px 0 10px; font-size: 28px; }
+      .narrative-card p { color: #374151; margin: 0; line-height: 1.6; }
+      .mood-box { background: rgba(255,255,255,0.7); border-radius: 18px; padding: 16px; }
+      .mood-box h3 { margin: 0 0 12px; }
+      .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+      .chip { background: rgba(29,185,84,0.12); color: #065f46; border-radius: 999px; padding: 6px 10px; font-size: 12px; font-weight: 700; }
       .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 22px 0; }
       .stat-card { background: var(--panel); border-radius: 18px; padding: 18px; box-shadow: var(--shadow); }
       .stat-card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
@@ -113,6 +121,18 @@ def generate_html_report(summary: dict, events: list[dict], output_path: str | P
       <div class='hero'>
         <h1>YOUR WRAPPED</h1>
         <p id='rangeLabel'>Loading listening range…</p>
+      </div>
+
+      <div class='narrative-card'>
+        <div>
+          <div class='eyebrow'>Your music identity</div>
+          <h2 id='listenerHeadline'>Loading your profile…</h2>
+          <p id='listenerNarrative'>Gathering the energy behind your listening habits.</p>
+        </div>
+        <div class='mood-box'>
+          <h3>Sound profile</h3>
+          <div id='moodSummary'></div>
+        </div>
       </div>
 
       <div class='filters'>
@@ -297,12 +317,33 @@ def generate_html_report(summary: dict, events: list[dict], output_path: str | P
         monthChart.innerHTML = _renderBarChart('Monthly trend', labels, values, '#34D399');
       }
 
+      function renderNarrative(summary) {
+        const profile = summary.listener_profile || {};
+        const mood = summary.mood_profile || {};
+        const headline = profile.headline || 'Your listening pattern is taking shape.';
+        const narrative = profile.summary || 'Your recent sessions are being translated into a more personal listening profile.';
+        document.getElementById('listenerHeadline').textContent = headline;
+        document.getElementById('listenerNarrative').textContent = narrative;
+
+        const badges = (summary.analysis_categories || []).slice(0, 4).map(item => `<span class='chip'>${item.name}: ${item.score}%</span>`).join('');
+        const totalListens = summary.total_tracks || 0;
+        const artistCount = summary.unique_artists || 0;
+        document.getElementById('moodSummary').innerHTML = `
+          <div><strong>Energy:</strong> ${mood.energy_label || 'Balanced'} (${Number(mood.energy || 0.5).toFixed(2)})</div>
+          <div><strong>Vibe:</strong> ${mood.valence_label || 'Balanced'}</div>
+          <div><strong>Tempo:</strong> ${mood.tempo_label || 'Steady groove'} (${Number(mood.tempo || 95).toFixed(0)} BPM)</div>
+          <div><strong>Pattern:</strong> ${totalListens} listens across ${artistCount} artists</div>
+          <div class='chip-row'>${badges || '<span class="chip">Early pattern</span>'}</div>
+        `;
+      }
+
       function renderInsights(summary) {
         const time = summary.time_analysis || {};
         const audio = (summary.audio_features || []).slice(0, 3);
         const topTrack = summary.top_tracks?.[0];
         const topArtist = summary.top_artists?.[0];
         const share = summary.total_tracks ? Math.round(((topArtist?.plays || 0) / summary.total_tracks) * 100) : 0;
+        const categories = (summary.analysis_categories || []).slice(0, 5);
         const insights = [
           ['Peak hour', `${time.peak_hour || 'N/A'} (${time.peak_hour_count || 0} plays)`],
           ['Most active weekday', Object.entries(time.day_of_week || {}).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A'],
@@ -312,7 +353,8 @@ def generate_html_report(summary: dict, events: list[dict], output_path: str | P
           ['Top artist share', `${share}%`]
         ];
         const audioRows = audio.length ? audio.map(item => `<tr><th>${item.track || 'Track'}</th><td>tempo ${item.tempo ?? 'N/A'} / energy ${item.energy ?? 'N/A'}</td></tr>`).join('') : '<tr><th>Local metrics</th><td>Audio analysis data is unavailable for this report. The dashboard still shows your live listening patterns from the CSV.</td></tr>';
-        insightsPanel.innerHTML = `<div class='insights'><h3>Listening insights</h3><table>${insights.map(([label, value]) => `<tr><th>${label}</th><td>${value}</td></tr>`).join('')}</table><h3 style='margin-top:18px;'>Audio summary</h3><table>${audioRows}</table></div>`;
+        const categoryRows = categories.length ? categories.map(item => `<tr><th>${item.name}</th><td>${item.score}% — ${item.description}</td></tr>`).join('') : '<tr><th>Profile</th><td>Your listening pattern is already forming. The early signal is strong enough to say this is a distinct, repeatable taste — even before the full picture settles.</td></tr>';
+        insightsPanel.innerHTML = `<div class='insights'><h3>Listening insights</h3><table>${insights.map(([label, value]) => `<tr><th>${label}</th><td>${value}</td></tr>`).join('')}</table><h3 style='margin-top:18px;'>Categories</h3><table>${categoryRows}</table><h3 style='margin-top:18px;'>Audio summary</h3><table>${audioRows}</table></div>`;
       }
 
       function renderAudioVibes(summary) {
@@ -403,6 +445,7 @@ def generate_html_report(summary: dict, events: list[dict], output_path: str | P
         const selectedEvents = filterEvents(start, end);
         const summary = buildSummary(selectedEvents);
         document.getElementById('rangeLabel').textContent = `Showing ${start} to ${end} · ${summary.total_tracks} listens · ${summary.top_artists[0]?.artist || 'No clear leader'}`;
+        renderNarrative(summary);
         renderStats(summary);
         renderMonthChart(summary);
         renderInsights(summary);

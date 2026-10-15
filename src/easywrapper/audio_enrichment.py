@@ -8,9 +8,36 @@ from typing import Iterable, Protocol
 import requests
 
 
+def _load_project_env() -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    candidates = [project_root / ".env", Path.cwd() / ".env"]
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        for raw_line in candidate.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = [part.strip() for part in line.split("=", 1)]
+            if key and key not in os.environ:
+                os.environ[key] = value.strip().strip("\"'")
+
+
+_load_project_env()
+
+
 class AudioFeatureClient(Protocol):
     def enrich_tracks(self, events: Iterable) -> list[dict]:
         ...
+
+
+def _coerce_float(value, default: float = 0.0) -> float:
+    if value is None:
+        return float(default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
 
 
 def _normalize_audio_features(payload: dict, artist: str, track: str, album: str) -> dict:
@@ -19,13 +46,13 @@ def _normalize_audio_features(payload: dict, artist: str, track: str, album: str
         "artist": artist,
         "track": track,
         "album": album,
-        "tempo": round(float(metrics.get("tempo", metrics.get("bpm", 0.0))), 2),
-        "danceability": round(float(metrics.get("danceability", 0.0)), 3),
-        "energy": round(float(metrics.get("energy", 0.0)), 3),
-        "valence": round(float(metrics.get("valence", 0.0)), 3),
-        "acousticness": round(float(metrics.get("acousticness", 0.0)), 3),
-        "speechiness": round(float(metrics.get("speechiness", 0.0)), 3),
-        "instrumentalness": round(float(metrics.get("instrumentalness", 0.0)), 3),
+        "tempo": round(_coerce_float(metrics.get("tempo", metrics.get("bpm", 0.0))), 2),
+        "danceability": round(_coerce_float(metrics.get("danceability", 0.0)), 3),
+        "energy": round(_coerce_float(metrics.get("energy", 0.0)), 3),
+        "valence": round(_coerce_float(metrics.get("valence", 0.0)), 3),
+        "acousticness": round(_coerce_float(metrics.get("acousticness", 0.0)), 3),
+        "speechiness": round(_coerce_float(metrics.get("speechiness", 0.0)), 3),
+        "instrumentalness": round(_coerce_float(metrics.get("instrumentalness", 0.0)), 3),
         "melodic_complexity_estimate": _estimate_melodic_complexity(metrics),
         "key": metrics.get("key") or metrics.get("musical_key"),
         "camelot": metrics.get("camelot") or metrics.get("camelot_code"),
@@ -34,10 +61,10 @@ def _normalize_audio_features(payload: dict, artist: str, track: str, album: str
 
 
 def _estimate_melodic_complexity(metrics: dict) -> float:
-    acousticness = float(metrics.get("acousticness", 0.0))
-    instrumentalness = float(metrics.get("instrumentalness", 0.0))
-    valence = float(metrics.get("valence", 0.5))
-    speechiness = float(metrics.get("speechiness", 0.0))
+    acousticness = _coerce_float(metrics.get("acousticness", 0.0))
+    instrumentalness = _coerce_float(metrics.get("instrumentalness", 0.0))
+    valence = _coerce_float(metrics.get("valence", 0.5))
+    speechiness = _coerce_float(metrics.get("speechiness", 0.0))
 
     estimate = (
         (1.0 - acousticness) * 0.35
@@ -111,60 +138,110 @@ class LocalJsonAudioClient(JsonAudioFeatureClient):
 
 
 class FreqblogAudioClient:
-    """Minimal adapter for a Spotify-shaped audio-features provider.
+    """Minimal adapter for the Freqblog lookup endpoint used in local wrapped reports."""
 
-    This intentionally keeps the surface area small and is designed around a
-    local CSV wrapped app, where the data source is already known and the API is
-    only used to enrich a limited subset of tracks.
-    """
-
-    def __init__(self, api_key: str | None = None, base_url: str = "https://api.freqblog.com"):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str = "https://api.freqblog.com",
+        top_artists: int = 5,
+        tracks_per_artist: int = 5,
+        debug: bool = False,
+    ):
         self.api_key = api_key or os.getenv("FREQBLOG_API_KEY")
         self.base_url = base_url.rstrip("/")
+        self.top_artists = max(1, int(top_artists))
+        self.tracks_per_artist = max(1, int(tracks_per_artist))
+        self.debug = bool(debug)
 
     def _headers(self) -> dict[str, str]:
         headers = {"Accept": "application/json"}
         if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+            headers["X-Api-Key"] = self.api_key
         return headers
 
-    def _lookup_by_isrc(self, isrc: str) -> dict | None:
-        if not isrc:
+    def _lookup_by_track(self, artist: str, track: str) -> dict | None:
+        if not self.api_key or not artist or not track:
+            if self.debug:
+                print(f"Freqblog lookup skipped: missing key or blank artist/track (artist={bool(artist)}, track={bool(track)}, key={bool(self.api_key)})")
             return None
 
-        url = f"{self.base_url}/v1/audio-features/{isrc}"
+        params = {"track": track, "artist": artist}
         try:
-            response = requests.get(url, headers=self._headers(), timeout=12)
-        except (requests.RequestException, OSError, TimeoutError):
+            if self.debug:
+                print(f"Freqblog lookup -> artist={artist} | track={track}")
+            response = requests.get(f"{self.base_url}/lookup", params=params, headers=self._headers(), timeout=12)
+        except (requests.RequestException, OSError, TimeoutError) as exc:
+            if self.debug:
+                print(f"Freqblog lookup failed for {artist} - {track}: {exc}")
             return None
 
         if response.status_code >= 400:
+            if self.debug:
+                print(f"Freqblog lookup returned status {response.status_code} for {artist} - {track}")
             return None
 
         payload = response.json()
         if not isinstance(payload, dict):
+            if self.debug:
+                print(f"Freqblog lookup returned non-dict payload for {artist} - {track}: {type(payload).__name__}")
             return None
+
+        if self.debug:
+            key_preview = list(payload.keys())[:8]
+            print(f"Freqblog success for {artist} - {track}: status={response.status_code}, keys={key_preview}")
         return payload
 
     def enrich_tracks(self, events: Iterable) -> list[dict]:
-        enriched: list[dict] = []
+        events = list(events)
+        if not events:
+            return []
+
+        artist_counts = {}
+        artist_track_counts: dict[str, dict[str, int]] = {}
+        album_lookup: dict[tuple[str, str], str] = {}
+
         for event in events:
-            isrc = getattr(event, "isrc", None) or getattr(event, "external_isrc", None)
-            if not isrc:
+            artist = str(getattr(event, "artist", "") or "").strip()
+            track = str(getattr(event, "track", "") or "").strip()
+            album = str(getattr(event, "album", "") or "").strip()
+            if not artist or not track:
                 continue
 
-            features = self._lookup_by_isrc(str(isrc))
-            if not features:
-                continue
+            artist_key = artist.lower()
+            track_key = track.lower()
+            artist_counts[artist_key] = artist_counts.get(artist_key, 0) + 1
+            artist_track_counts.setdefault(artist_key, {})
+            artist_track_counts[artist_key][track_key] = artist_track_counts[artist_key].get(track_key, 0) + 1
+            album_lookup.setdefault((artist_key, track_key), album)
 
-            enriched.append(
-                _normalize_audio_features(
-                    features,
-                    artist=str(getattr(event, "artist", "") or "Unknown"),
-                    track=str(getattr(event, "track", "") or "Unknown"),
-                    album=str(getattr(event, "album", "") or "Unknown"),
-                )
-            )
+        prioritized_artists = [
+            artist for artist, _ in sorted(artist_counts.items(), key=lambda item: (-item[1], item[0]))[: self.top_artists]
+        ]
+
+        prioritized_pairs: list[tuple[str, str]] = []
+        seen_pairs: set[tuple[str, str]] = set()
+        for artist_key in prioritized_artists:
+            tracks = sorted(
+                artist_track_counts.get(artist_key, {}).items(),
+                key=lambda item: (-item[1], item[0]),
+            )[: self.tracks_per_artist]
+            for track_key, _ in tracks:
+                pair = (artist_key, track_key)
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+                prioritized_pairs.append(pair)
+
+        enriched: list[dict] = []
+        for artist_key, track_key in prioritized_pairs:
+            artist_name = next((event.artist for event in events if str(event.artist).lower() == artist_key), artist_key.title())
+            track_name = next((event.track for event in events if str(event.artist).lower() == artist_key and str(event.track).lower() == track_key), track_key.title())
+            album_name = album_lookup.get((artist_key, track_key), "Unknown")
+            payload = self._lookup_by_track(artist_name, track_name)
+            if not payload:
+                continue
+            enriched.append(_normalize_audio_features(payload, artist_name, track_name, album_name))
 
         return enriched
 
@@ -182,6 +259,9 @@ def create_audio_client(provider: str | None = None, **kwargs) -> AudioFeatureCl
         return FreqblogAudioClient(
             api_key=kwargs.get("api_key"),
             base_url=kwargs.get("base_url", "https://api.freqblog.com"),
+            top_artists=kwargs.get("top_artists", 5),
+            tracks_per_artist=kwargs.get("tracks_per_artist", 5),
+            debug=bool(kwargs.get("debug", False)),
         )
 
     if provider_name in {"spotify", "sp"}:

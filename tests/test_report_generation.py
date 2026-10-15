@@ -37,6 +37,9 @@ class ReportGenerationTests(unittest.TestCase):
         self.assertIn("peak_hour", summary["time_analysis"])
         self.assertIn("monthly_trend", summary)
         self.assertIn("day_part", summary["time_analysis"])
+        self.assertIn("listener_profile", summary)
+        self.assertIn("mood_profile", summary)
+        self.assertIn("analysis_categories", summary)
 
     def test_generate_report_creates_pdf(self):
         summary = {
@@ -381,6 +384,85 @@ class ReportGenerationTests(unittest.TestCase):
         self.assertEqual(len(result), 3)
         self.assertEqual({(item["artist"], item["track"]) for item in result}, {("Artist A", "Song A1"), ("Artist A", "Song A2"), ("Artist C", "Song C1")})
         self.assertEqual(len(calls), 3)
+
+    def test_freqblog_client_uses_top_five_artists_and_top_five_tracks(self):
+        from easywrapper.audio_enrichment import FreqblogAudioClient
+
+        events = [
+            ListeningEvent("Artist A", "Album 1", "Song A1", datetime(2025, 1, 1, 21, 0)),
+            ListeningEvent("Artist A", "Album 1", "Song A1", datetime(2025, 1, 1, 21, 5)),
+            ListeningEvent("Artist A", "Album 1", "Song A2", datetime(2025, 1, 1, 21, 10)),
+            ListeningEvent("Artist A", "Album 1", "Song A3", datetime(2025, 1, 1, 21, 15)),
+            ListeningEvent("Artist A", "Album 1", "Song A4", datetime(2025, 1, 1, 21, 20)),
+            ListeningEvent("Artist A", "Album 1", "Song A5", datetime(2025, 1, 1, 21, 25)),
+            ListeningEvent("Artist A", "Album 1", "Song A6", datetime(2025, 1, 1, 21, 30)),
+            ListeningEvent("Artist B", "Album 2", "Song B1", datetime(2025, 1, 2, 21, 0)),
+            ListeningEvent("Artist B", "Album 2", "Song B2", datetime(2025, 1, 2, 21, 5)),
+            ListeningEvent("Artist C", "Album 3", "Song C1", datetime(2025, 1, 3, 21, 0)),
+            ListeningEvent("Artist C", "Album 3", "Song C2", datetime(2025, 1, 3, 21, 5)),
+            ListeningEvent("Artist D", "Album 4", "Song D1", datetime(2025, 1, 4, 21, 0)),
+            ListeningEvent("Artist E", "Album 5", "Song E1", datetime(2025, 1, 5, 21, 0)),
+            ListeningEvent("Artist F", "Album 6", "Song F1", datetime(2025, 1, 6, 21, 0)),
+            ListeningEvent("Artist G", "Album 7", "Song G1", datetime(2025, 1, 7, 21, 0)),
+        ]
+
+        client = FreqblogAudioClient(api_key="demo-key")
+        calls = []
+
+        class FakeResponse:
+            def __init__(self, payload):
+                self.status_code = 200
+                self._payload = payload
+            def json(self):
+                return self._payload
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            calls.append((url, params, headers))
+            track = params["track"] if params else ""
+            artist = params["artist"] if params else ""
+            return FakeResponse({
+                "track_name": track,
+                "artist_name": artist,
+                "bpm": 110.0,
+                "energy": 0.75,
+                "danceability": 0.82,
+                "valence": 0.64,
+                "acousticness": 0.3,
+                "speechiness": 0.2,
+                "instrumentalness": 0.1,
+            })
+
+        with patch("easywrapper.audio_enrichment.requests.get", side_effect=fake_get):
+            result = client.enrich_tracks(events)
+
+        self.assertLessEqual(len(result), 25)
+        self.assertGreaterEqual(len(calls), 5)
+        self.assertLessEqual(len(calls), 25)
+        artists_requested = {call[1]["artist"] for call in calls}
+        self.assertIn("Artist A", artists_requested)
+        self.assertNotIn("Artist G", artists_requested)
+
+    def test_freqblog_audio_normalizer_handles_none_feature_fields(self):
+        from easywrapper.audio_enrichment import _normalize_audio_features
+
+        result = _normalize_audio_features(
+            {
+                "tempo": 110.0,
+                "danceability": 0.82,
+                "energy": 0.75,
+                "valence": 0.64,
+                "acousticness": 0.3,
+                "speechiness": None,
+                "instrumentalness": None,
+            },
+            "Artist A",
+            "Song A1",
+            "Album 1",
+        )
+
+        self.assertEqual(result["tempo"], 110.0)
+        self.assertEqual(result["speechiness"], 0.0)
+        self.assertEqual(result["instrumentalness"], 0.0)
 
 
 if __name__ == "__main__":

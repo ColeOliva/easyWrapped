@@ -55,14 +55,14 @@ def parse_args():
     parser.add_argument(
         "--top-artists",
         type=int,
-        default=10,
+        default=5,
         help="Enrich the top N artists by play count, then choose up to --tracks-per-artist tracks from each artist.",
     )
     parser.add_argument(
         "--tracks-per-artist",
         type=int,
         default=5,
-        help="How many tracks from each artist to enrich when using artist-first selection.",
+        help="How many tracks from each artist to enrich when using artist-first selection. The default is 5 tracks for each of the top 5 artists.",
     )
     parser.add_argument(
         "--max-enrich",
@@ -85,6 +85,11 @@ def parse_args():
         action="store_true",
         help="Print the structured JSON summary in addition to saving the wrapped report.",
     )
+    parser.add_argument(
+        "--debug-api",
+        action="store_true",
+        help="Print each audio lookup request and a short response summary so you can confirm the provider is receiving data.",
+    )
     return parser.parse_args()
 
 
@@ -103,6 +108,7 @@ def main():
                 max_tracks=args.max_enrich,
                 top_artists=args.top_artists,
                 tracks_per_artist=args.tracks_per_artist,
+                debug=args.debug_api,
             )
         except ValueError as exc:
             print(f"Warning: audio enrichment skipped: {exc}")
