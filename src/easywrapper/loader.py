@@ -1,16 +1,30 @@
 from __future__ import annotations
 
 import csv
+import math
+import re
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, List
+from zoneinfo import ZoneInfo
 
 from .models import ListeningEvent
 
 
 def _format_hour(hour: int) -> str:
     return f"{hour:02d}:00"
+
+
+def _normalize_artist_name(artist: str | None) -> str:
+    if artist is None:
+        return ""
+    cleaned = str(artist).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = re.sub(r"\s+feat(?:uring)?\.?\s+.*$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+&\s+", " and ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+\(.*?\)$", "", cleaned)
+    return cleaned.strip()
 
 
 def _day_part_for_hour(hour: int) -> str:
@@ -23,7 +37,7 @@ def _day_part_for_hour(hour: int) -> str:
     return "Night"
 
 
-def _parse_datetime(value: str | None) -> datetime | None:
+def _parse_datetime(value: str | None, timezone_name: str | None = None) -> datetime | None:
     if value is None:
         return None
 
@@ -37,22 +51,157 @@ def _parse_datetime(value: str | None) -> datetime | None:
         "%Y-%m-%d %H:%M",
         "%m/%d/%Y %H:%M",
         "%d/%m/%Y %H:%M",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y/%m/%d %H:%M",
     ]
     for fmt in formats:
         try:
-            return datetime.strptime(value, fmt)
+            parsed = datetime.strptime(value, fmt)
+            break
         except ValueError:
             continue
+    else:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
 
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
+    if parsed.tzinfo is None and timezone_name:
+        try:
+            parsed = parsed.replace(tzinfo=ZoneInfo(timezone_name))
+        except Exception:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+    elif parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    return parsed
 
 
-def load_listening_history(csv_path: str | Path) -> List[ListeningEvent]:
+def _calculate_listening_diversity(artist_counter: Counter) -> float:
+    if not artist_counter:
+        return 0.0
+
+    total = sum(artist_counter.values())
+    entropy = -sum((count / total) * math.log2(count / total) for count in artist_counter.values() if count)
+    max_entropy = math.log2(len(artist_counter)) if len(artist_counter) > 1 else 1.0
+    if max_entropy <= 0:
+        return 0.0
+    return round(entropy / max_entropy, 3)
+
+
+def _build_discovery_by_month(events: List[ListeningEvent]) -> list[dict]:
+    month_map: dict[str, list[str]] = {}
+    for event in events:
+        month = event.listened_at.strftime("%Y-%m")
+        month_map.setdefault(month, [])
+        month_map[month].append(_normalize_artist_name(event.artist))
+
+    seen_artists: set[str] = set()
+    results: list[dict] = []
+    for month in sorted(month_map):
+        artist_names = month_map[month]
+        month_counter = Counter(artist_names)
+        new_artists = sum(1 for artist in month_counter if artist and artist not in seen_artists)
+        repeat_artists = sum(1 for artist in month_counter if artist and artist in seen_artists)
+        seen_artists.update(artist for artist in month_counter if artist)
+        results.append({
+            "month": month,
+            "new_artists": new_artists,
+            "repeat_artists": repeat_artists,
+            "top_artists": [{"artist": artist, "plays": count} for artist, count in month_counter.most_common(5)],
+        })
+    return results
+
+
+def _jensen_shannon_divergence(left: Counter, right: Counter) -> float:
+    keys = set(left) | set(right)
+    if not keys:
+        return 0.0
+
+    left_total = sum(left.values()) or 1
+    right_total = sum(right.values()) or 1
+    p = {key: left.get(key, 0) / left_total for key in keys}
+    q = {key: right.get(key, 0) / right_total for key in keys}
+    m = {key: 0.5 * (p[key] + q[key]) for key in keys}
+
+    entropy_part = 0.0
+    for key in keys:
+        term_left = 0.0
+        term_right = 0.0
+
+        if p[key] > 0 and m[key] > 0:
+            term_left = p[key] * math.log2(p[key] / m[key])
+        if q[key] > 0 and m[key] > 0:
+            term_right = q[key] * math.log2(q[key] / m[key])
+
+        entropy_part += (term_left + term_right) * 0.5
+    return round(entropy_part, 4)
+
+
+def _build_taste_drift(events: List[ListeningEvent]) -> float:
+    month_artist_counts: dict[str, Counter] = {}
+    for event in events:
+        month = event.listened_at.strftime("%Y-%m")
+        month_artist_counts.setdefault(month, Counter())
+        month_artist_counts[month][_normalize_artist_name(event.artist)] += 1
+
+    months = sorted(month_artist_counts)
+    if len(months) < 2:
+        return 0.0
+
+    divergences = []
+    for left_month, right_month in zip(months, months[1:]):
+        divergences.append(_jensen_shannon_divergence(month_artist_counts[left_month], month_artist_counts[right_month]))
+
+    return round(sum(divergences) / len(divergences), 3) if divergences else 0.0
+
+
+def _build_familiarity_curve(events: List[ListeningEvent]) -> list[dict]:
+    track_counts = Counter((event.artist, event.track) for event in events)
+    repeated_play_counts = Counter(count for count in track_counts.values() if count > 1)
+    if not repeated_play_counts:
+        return [{"play_count": 1, "track_count": len(track_counts)}]
+
+    return [
+        {"play_count": play_count, "track_count": count}
+        for play_count, count in sorted(repeated_play_counts.items())
+    ]
+
+
+def _build_reminiscence_bump(audio_features: list[dict]) -> dict:
+    release_years = []
+    for item in audio_features:
+        if not isinstance(item, dict):
+            continue
+        value = item.get("release_date") or item.get("release_year")
+        if not value:
+            continue
+        try:
+            if isinstance(value, str) and len(value) >= 4:
+                year = int(value[:4])
+            else:
+                year = int(value)
+            release_years.append(year)
+        except (TypeError, ValueError):
+            continue
+
+    if not release_years:
+        return {"available": False, "message": "No release years were available in the enriched metadata."}
+
+    avg_year = round(sum(release_years) / len(release_years), 1)
+    return {
+        "available": True,
+        "average_release_year": avg_year,
+        "earliest_release_year": min(release_years),
+        "latest_release_year": max(release_years),
+        "message": "This signal is only meaningful when the audio metadata contains release years.",
+    }
+
+
+def load_listening_history(csv_path: str | Path, timezone_name: str | None = None) -> List[ListeningEvent]:
     csv_path = Path(csv_path)
     events: List[ListeningEvent] = []
+    seen_keys: set[tuple[str, str, str, str]] = set()
 
     with csv_path.open("r", newline="", encoding="utf-8-sig") as handle:
         rows = [row for row in csv.reader(handle) if row and any(cell.strip() for cell in row)]
@@ -80,14 +229,19 @@ def load_listening_history(csv_path: str | Path) -> List[ListeningEvent]:
         if len(row) < 4:
             continue
 
-        artist = row[0].strip()
-        album = row[1].strip()
-        track = row[2].strip()
-        timestamp_value = row[3].strip()
+        artist = _normalize_artist_name(row[0])
+        album = str(row[1]).strip() if len(row) > 1 else ""
+        track = str(row[2]).strip() if len(row) > 2 else ""
+        timestamp_value = str(row[3]).strip() if len(row) > 3 else ""
 
-        timestamp = _parse_datetime(timestamp_value)
+        timestamp = _parse_datetime(timestamp_value, timezone_name=timezone_name)
         if not artist or not track or timestamp is None:
             continue
+
+        key = (artist.lower(), track.lower(), album.lower(), timestamp.isoformat())
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
 
         events.append(ListeningEvent(artist=artist, album=album, track=track, listened_at=timestamp))
 
@@ -378,15 +532,23 @@ def build_wrapped_summary(events: Iterable[ListeningEvent], spotify_client=None,
             "most_active_day": None,
             "time_analysis": _build_time_analysis(events),
             "monthly_trend": [],
+            "discovery_by_month": [],
+            "artist_trends": [],
+            "listening_diversity": 0.0,
+            "taste_drift": 0.0,
+            "familiarity_curve": [],
+            "reminiscence_bump": {"available": False, "message": "No release years are available without enriched metadata."},
             "audio_features": [],
             "mood_profile": _build_mood_profile([], []),
             "analysis_categories": [],
             "listener_profile": profile,
+            "research_signals": [],
         }
 
-    artist_counter = Counter(event.artist for event in events)
-    track_counter = Counter((event.artist, event.track) for event in events)
+    artist_counter = Counter(_normalize_artist_name(event.artist) for event in events)
+    track_counter = Counter((_normalize_artist_name(event.artist), event.track) for event in events)
     day_counter = Counter(event.listened_at.strftime("%A") for event in events)
+    discovery_by_month = _build_discovery_by_month(events)
 
     summary = {
         "total_tracks": len(events),
@@ -406,6 +568,15 @@ def build_wrapped_summary(events: Iterable[ListeningEvent], spotify_client=None,
         "most_active_day": day_counter.most_common(1)[0][0] if day_counter else None,
         "time_analysis": _build_time_analysis(events),
         "monthly_trend": _build_monthly_trend(events),
+        "discovery_by_month": discovery_by_month,
+        "artist_trends": [{
+            "month": item["month"],
+            "top_artists": item["top_artists"],
+        } for item in discovery_by_month],
+        "listening_diversity": _calculate_listening_diversity(artist_counter),
+        "taste_drift": _build_taste_drift(events),
+        "familiarity_curve": _build_familiarity_curve(events),
+        "reminiscence_bump": {"available": False, "message": "No release years are available without enriched metadata."},
         "audio_features": [],
     }
 
@@ -413,7 +584,34 @@ def build_wrapped_summary(events: Iterable[ListeningEvent], spotify_client=None,
     if provider is not None:
         summary["audio_features"] = provider.enrich_tracks(events)
 
+    summary["reminiscence_bump"] = _build_reminiscence_bump(summary["audio_features"])
     summary["mood_profile"] = _build_mood_profile(events, summary["audio_features"])
     summary["analysis_categories"] = _build_analysis_categories(events, summary["audio_features"])
     summary["listener_profile"] = _build_listener_profile(events, summary["mood_profile"], summary["analysis_categories"])
+    summary["research_signals"] = [
+        {
+            "name": "Listening diversity",
+            "value": summary["listening_diversity"],
+            "method": "Normalized Shannon entropy over the artist distribution in this window.",
+            "limit": "This is a descriptive measure, not a personality label.",
+        },
+        {
+            "name": "Taste drift",
+            "value": summary["taste_drift"],
+            "method": "Average Jensen-Shannon divergence across monthly artist distributions.",
+            "limit": "Only stable when there are at least two months of data.",
+        },
+        {
+            "name": "Discovery rate",
+            "value": discovery_by_month[-1]["new_artists"] if discovery_by_month else 0,
+            "method": "New artists versus repeat artists by month.",
+            "limit": "Short windows can exaggerate novelty or comfort.",
+        },
+        {
+            "name": "Familiarity curve",
+            "value": len(summary["familiarity_curve"]),
+            "method": "Tracks repeated more than once are counted to show how replay-heavy your library is.",
+            "limit": "This is not a direct measure of attachment or preference strength.",
+        },
+    ]
     return summary

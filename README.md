@@ -1,31 +1,39 @@
 # easyWrapper
 
-A personal wrapped-style analytics project for CSV listening history. It reads a listening export, calculates top artists and tracks, and can output either a polished PDF or a browser-based dashboard with filterable ranges and popup details.
+<img src="docs/dashboard-preview.svg" alt="easyWrapper dashboard preview" width="1200" />
 
-The repo is intentionally built to accept the common listening-export format that does not include a header row. Each row is expected to be: artist, album, track, timestamp.
+A small, personal wrapped-style analytics project for listening-history CSV exports. It turns a raw music export into a readable dashboard, a PDF report, and a few defensible stats without requiring a notebook workflow or an expensive API budget.
+
+This project is designed to be easy to run from a fresh clone: drop in your CSV, choose a timezone, and get a summary in minutes.
 
 ## Why this project
 
-The repo is intentionally small and opinionated:
+- It is meant for personal listening-history exports, not for a hosted product.
+- It accepts both headered and headerless CSVs.
+- It keeps the analysis transparent and explainable.
+- It avoids unsupported claims like a literal "melodic complexity" score.
+- It focuses on honest measures such as listening diversity, discovery rate, and month-over-month shifts.
 
-- It is designed for personal listening-history exports.
-- It accepts headerless CSVs like the attached sample, as well as headered exports when present.
-- It avoids heavy ML dependencies.
-- It produces a wrapped-style report without requiring a notebook workflow.
-- It supports optional audio-feature enrichment, but defaults to a local/offline JSON path so it can run without live API calls.
+## How to get your export
 
-## Project structure
+You can usually export a CSV from your music service or listening history provider in one of these ways:
 
-- `main.py` – entry point for the wrapped workflow
-- `src/easywrapper/loader.py` – CSV parsing and summary logic
-- `src/easywrapper/html_report.py` – browser-based wrapped dashboard
-- `src/easywrapper/report_generator.py` – PDF report generation
-- `src/easywrapper/audio_enrichment.py` – local JSON provider + optional Spotify/Freqblog adapters
-- `src/easywrapper/spotify_client.py` – optional Spotify enrichment
-- `src/easywrapper/models.py` – data types
-- `data/` – local JSON cache for audio-feature payloads when using the offline provider
+- Spotify: Account > Data and privacy > Download your data
+- Apple Music: use the export flow available through your account history or app data access
+- Last.fm or other music services: export your scrobbles/history CSV
+- If you use an app or service that does not support direct CSV export, you may need to request a history export or use a personal tool that exports your stream logs
+
+The expected columns are usually one of these:
+
+- `artist, album, track, timestamp`
+- or a headered version with the same names (`artist`, `album`, `track`, `timestamp` / `listened_at`)
+
+The tool will skip malformed rows and duplicate entries, but it still helps to clean the export before running.
 
 ## Quick start
+
+1. Clone the repo and create a virtual environment
+a. Python 3.10+ is recommended.
 
 ```bash
 python -m venv .venv
@@ -33,80 +41,80 @@ python -m venv .venv
 .venv\Scripts\activate
 # macOS / Linux
 source .venv/bin/activate
-
-pip install -r requirements.txt
-python main.py coletoliva.csv
 ```
 
-This generates a PDF file next to the CSV, such as `coletoliva_wrapped_report.pdf`.
-
-To generate an interactive browser report instead:
+2. Install the package and its dependencies
 
 ```bash
-python main.py coletoliva.csv --html --open-browser
+pip install -e .
 ```
 
-This opens a browser-based wrapped dashboard where you can:
+3. Run the CLI against a CSV file
 
-- change the reporting window by month range
-- compare top artists and tracks across different periods
-- view the most active times of day and weekly behavior
-- inspect individual artists/tracks in a popup panel
+```bash
+easywrapper data/sample_listening_history.csv --html --open-browser
+```
+
+Or generate the PDF version:
+
+```bash
+easywrapper data/sample_listening_history.csv --output wrapped_report.pdf
+```
+
+If your export timestamps are naive, set the timezone explicitly:
+
+```bash
+easywrapper data/sample_listening_history.csv --timezone America/New_York
+```
+
+## Project structure
+
+- `main.py` – CLI entry point
+- `src/easywrapper/loader.py` – CSV parsing, deduping, timezone handling, summary stats
+- `src/easywrapper/html_report.py` – browser-based dashboard
+- `src/easywrapper/report_generator.py` – PDF report generation
+- `src/easywrapper/audio_enrichment.py` – offline and optional enrichment adapters
+- `src/easywrapper/spotify_client.py` – optional Spotify enrichment
+- `src/easywrapper/models.py` – data model
+- `data/sample_listening_history.csv` – tiny sample dataset for quick-start testing
 
 ## Offline by default
 
-The project defaults to the local/offline data path to avoid live API requests. In practice, that means:
+The app is intentionally safe to run without live requests. It defaults to a local/offline flow unless you explicitly opt into an enrichment provider.
 
-- If you have saved audio-feature JSON payloads in the `data/` folder, they are used automatically.
-- No live requests are made unless you explicitly choose a provider such as Spotify or Freqblog.
-- This makes the app safe for a personal budget and easy to run with a local cache.
+If you want to use private credentials, add them to a local `.env` file in the project root and provide the provider explicitly.
 
-## Optional live enrichment
+## What the report includes
 
-If you want to enrich your own listening history with Spotify audio features, keep the credentials local and private. Add them to a `.env` file in the project root (or export them in your shell), then run:
+- total plays and unique artists
+- top artists and top tracks
+- listening diversity score (normalized Shannon entropy of your artist distribution)
+- discovery rate by month (new vs repeat artists)
+- month-by-month trend data
+- most active hour/day and listening window
+- optional audio-feature cards when metadata is available
 
-```bash
-python main.py coletoliva.csv --enrich --audio-provider spotify --output wrapped.pdf
-```
+## Stats with a defensible basis
 
-This is intended for your own private use and should not be committed to source control. The project automatically reads a local `.env` file if present.
+This project tries to avoid pseudo-scientific labels and instead uses transparent math:
 
-For a provider that is shaped similarly to Spotify but does not require a personal developer account, you can also use the `freqblog` adapter when configured.
+- Listening diversity: Shannon entropy over your artist distribution, normalized to a 0–1 scale
+- Discovery rate: new artists vs repeat artists by month
+- Time-of-day: explicit timezone-aware calculations that prevent drift from local timezone assumptions
+- Artist normalization: strips `feat.` and case differences so counts do not split the same artist across variants
 
-## Example output
+## Research-backed additions you could add next
 
-The PDF or HTML includes:
+These are the most sensible extensions to keep the idea grounded instead of turning it into vague personality profiling:
 
-- your total listens
-- top artist and top tracks
-- most active day
-- listening range
-- optional audio-vibe cards when metadata is available
+- Reminiscence bump: compare release years against a user’s age range
+- Taste diversity and drift: month-to-month Jensen-Shannon divergence
+- Familiarity curve: track replays per song over time
+- Time-of-day and mood regulation: compare late-night vs daytime listening habits
+- Discovery versus comfort ratio: new artists versus repeat artists over time
 
-A JSON summary is still available with `--json` if you want the raw stats in the terminal.
+Each of these should come with a short Methods and limits section, not just a polished headline.
 
-## Generated files
+## License
 
-Files like `tmp_wrapped_report.html`, `wrapped.pdf`, and `*_wrapped_report.*` are generated artifacts. They are useful for local viewing but are not part of the app source itself.
-
-If you want a clean repo, you can delete these locally or keep them in a separate output folder; they should not be treated as source files.
-
-## Notes on "melodic complexity"
-
-Spotify does not expose a direct melodic complexity metric. This project uses a lightweight approximation based on available features, for example:
-
-```text
-melodic_complexity_estimate = (1 - acousticness) * 0.35 + (1 - instrumentalness) * 0.25 + valence * 0.2 + speechiness * 0.2
-```
-
-This is a useful heuristic, not a true music-theory measure.
-
-## Next steps
-
-Possible next enhancements:
-
-1. Add a proper JSON export/import workflow for your personal audio cache.
-2. Build charts by month/week/day.
-3. Add a richer dashboard UI.
-4. Add artist and track embeddings for more advanced recommendations.
-5. Persist output to JSON/CSV for yearly wrapped reports.
+This project is licensed under the MIT License. See `LICENSE` for details.

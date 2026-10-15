@@ -1,11 +1,21 @@
 .venv/
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 .env
 .DS_Store
 .pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# Generated reports
 *_wrapped_report.html
 *_wrapped_report.pdf
 tmp_*.html
 wrapped.pdf
+
+# Local user data: keep sample history in version control, ignore personal exports.
+*.csv
+!data/sample_listening_history.csv
+!samples/*.csv

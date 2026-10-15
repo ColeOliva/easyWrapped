@@ -167,20 +167,6 @@ class SpotifyAudioClient:
 
         return features_by_id
 
-    def _melodic_complexity_estimate(self, features: dict) -> float:
-        acousticness = float(features.get("acousticness", 0.0))
-        instrumentalness = float(features.get("instrumentalness", 0.0))
-        valence = float(features.get("valence", 0.5))
-        speechiness = float(features.get("speechiness", 0.0))
-
-        estimate = (
-            (1.0 - acousticness) * 0.35
-            + (1.0 - instrumentalness) * 0.25
-            + valence * 0.2
-            + speechiness * 0.2
-        )
-        return round(max(0.0, min(1.0, estimate)), 3)
-
     def enrich_tracks(self, events: Iterable) -> List[dict]:
         enriched: List[dict] = []
         seen = set()
@@ -251,7 +237,6 @@ class SpotifyAudioClient:
                     "acousticness": round(float(features.get("acousticness", 0.0)), 3),
                     "speechiness": round(float(features.get("speechiness", 0.0)), 3),
                     "instrumentalness": round(float(features.get("instrumentalness", 0.0)), 3),
-                    "melodic_complexity_estimate": self._melodic_complexity_estimate(features),
                 }
             )
 

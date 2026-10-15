@@ -53,26 +53,10 @@ def _normalize_audio_features(payload: dict, artist: str, track: str, album: str
         "acousticness": round(_coerce_float(metrics.get("acousticness", 0.0)), 3),
         "speechiness": round(_coerce_float(metrics.get("speechiness", 0.0)), 3),
         "instrumentalness": round(_coerce_float(metrics.get("instrumentalness", 0.0)), 3),
-        "melodic_complexity_estimate": _estimate_melodic_complexity(metrics),
         "key": metrics.get("key") or metrics.get("musical_key"),
         "camelot": metrics.get("camelot") or metrics.get("camelot_code"),
         "release_date": metrics.get("release_date"),
     }
-
-
-def _estimate_melodic_complexity(metrics: dict) -> float:
-    acousticness = _coerce_float(metrics.get("acousticness", 0.0))
-    instrumentalness = _coerce_float(metrics.get("instrumentalness", 0.0))
-    valence = _coerce_float(metrics.get("valence", 0.5))
-    speechiness = _coerce_float(metrics.get("speechiness", 0.0))
-
-    estimate = (
-        (1.0 - acousticness) * 0.35
-        + (1.0 - instrumentalness) * 0.25
-        + valence * 0.2
-        + speechiness * 0.2
-    )
-    return round(max(0.0, min(1.0, estimate)), 3)
 
 
 class JsonAudioFeatureClient:

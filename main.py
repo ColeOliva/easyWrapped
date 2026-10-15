@@ -16,11 +16,16 @@ from easywrapper.loader import build_wrapped_summary, load_listening_history
 from easywrapper.report_generator import generate_report
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate a wrapped-style report from CSV listening history."
     )
     parser.add_argument("csv_path", help="Path to a CSV file with artist, album, track, and timestamp columns.")
+    parser.add_argument(
+        "--timezone",
+        default=os.getenv("LOCAL_TIMEZONE", "UTC"),
+        help="IANA timezone to apply to naive timestamps (for example America/New_York or Europe/London). Defaults to UTC unless set in LOCAL_TIMEZONE.",
+    )
     parser.add_argument(
         "--output",
         default=None,
@@ -93,9 +98,9 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
+def main() -> None:
     args = parse_args()
-    events = load_listening_history(args.csv_path)
+    events = load_listening_history(args.csv_path, timezone_name=args.timezone)
     audio_client = None
 
     if args.enrich:

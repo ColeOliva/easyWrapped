@@ -163,6 +163,10 @@ def generate_html_report(summary: dict, events: list[dict], output_path: str | P
       </div>
 
       <div class='grid' style='margin-top: 18px;'>
+        <div id='researchSignals'></div>
+      </div>
+
+      <div class='grid' style='margin-top: 18px;'>
         <div id='artistTable'></div>
         <div id='trackTable'></div>
       </div>
@@ -480,6 +484,26 @@ def generate_html_report(summary: dict, events: list[dict], output_path: str | P
         insightsPanel.innerHTML = `<div class='insights'><h3>Listening insights</h3><table>${insights.slice(0, 4).map(([label, value]) => `<tr><th>${label}</th><td>${value}</td></tr>`).join('')}</table><h3 style='margin-top:18px;'>Categories</h3><table>${categoryRows}</table><h3 style='margin-top:18px;'>Evidence</h3><table>${evidenceRows || '<tr><th>Profile</th><td>Signal is still forming.</td></tr>'}</table><h3 style='margin-top:18px;'>Audio summary</h3><table>${audioRows}</table></div>`;
       }
 
+      function renderResearchSignals(summary) {
+        const signals = summary.research_signals || [];
+        const container = document.getElementById('researchSignals');
+        if (!signals.length) {
+          container.innerHTML = `<div class='table-panel'><h3>Research signals</h3><p>No research metrics were available for this period.</p></div>`;
+          return;
+        }
+
+        const rows = signals.map(signal => `
+          <tr>
+            <th>${signal.name}</th>
+            <td>${typeof signal.value === 'number' ? Number(signal.value).toFixed(3) : signal.value}</td>
+            <td>${signal.method}</td>
+            <td>${signal.limit}</td>
+          </tr>
+        `).join('');
+
+        container.innerHTML = `<div class='table-panel'><h3>Research signals</h3><table><thead><tr><th>Metric</th><th>Value</th><th>Method</th><th>Limit</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      }
+
       function renderAudioVibes(summary) {
         const audio = summary.audio_features || [];
         const container = document.getElementById('audioVibes');
@@ -572,6 +596,7 @@ def generate_html_report(summary: dict, events: list[dict], output_path: str | P
         renderStats(summary);
         renderMonthChart(summary);
         renderInsights(summary);
+        renderResearchSignals(summary);
         renderAudioVibes(summary);
         renderTables(summary, topN);
       }

@@ -17,7 +17,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from easywrapper.html_report import generate_html_report
-from easywrapper.loader import build_wrapped_summary
+from easywrapper.loader import build_wrapped_summary, load_listening_history
 from easywrapper.models import ListeningEvent
 from easywrapper.report_generator import generate_report
 
@@ -241,6 +241,57 @@ class ReportGenerationTests(unittest.TestCase):
 
         self.assertEqual(summary["audio_features"][0]["artist"], "Laufey")
         self.assertEqual(summary["audio_features"][0]["tempo"], 101.5)
+
+    def test_load_listening_history_handles_duplicates_timezone_and_bad_rows(self):
+        csv_path = Path("test_duplicate_csv.csv")
+        csv_path.write_text(
+            "Laufey, Bewitched Hand, Dreamer, 2025-01-01 21:00:00\n"
+            "Laufey, Bewitched Hand, Dreamer, 2025-01-01 21:00:00\n"
+            "Faye Webster, Underdressed, Lifetime, not-a-time\n"
+            "Faye Webster feat. Yannis, Underdressed, But Not Kiss, 2025-01-02 09:30:00\n",
+            encoding="utf-8",
+        )
+        try:
+            events = load_listening_history(csv_path, timezone_name="UTC")
+        finally:
+            if csv_path.exists():
+                csv_path.unlink()
+
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0].artist, "Laufey")
+        self.assertEqual(events[1].artist, "Faye Webster")
+        self.assertEqual(events[0].listened_at.tzinfo is not None, True)
+
+    def test_wrapped_summary_has_diversity_and_discovery_stats(self):
+        events = [
+            ListeningEvent("Laufey", "Bewitched Hand", "Dreamer", datetime(2025, 1, 1, 21, 0)),
+            ListeningEvent("Laufey", "Bewitched Hand", "Dreamer", datetime(2025, 1, 2, 21, 0)),
+            ListeningEvent("Faye Webster", "Underdressed at the Symphony", "Lifetime", datetime(2025, 1, 3, 10, 0)),
+            ListeningEvent("Faye Webster feat. Yannis", "Underdressed at the Symphony", "But Not Kiss", datetime(2025, 1, 4, 9, 30)),
+        ]
+
+        summary = build_wrapped_summary(events)
+
+        self.assertIn("listening_diversity", summary)
+        self.assertIn("discovery_by_month", summary)
+        self.assertEqual(summary["discovery_by_month"][0]["new_artists"], 2)
+
+    def test_summary_includes_research_signals_and_taste_drift(self):
+        events = [
+            ListeningEvent("Laufey", "Bewitched Hand", "Dreamer", datetime(2025, 1, 1, 21, 0)),
+            ListeningEvent("Laufey", "Bewitched Hand", "Dreamer", datetime(2025, 1, 2, 21, 0)),
+            ListeningEvent("Faye Webster", "Underdressed at the Symphony", "Lifetime", datetime(2025, 2, 1, 10, 0)),
+            ListeningEvent("Faye Webster", "Underdressed at the Symphony", "Lifetime", datetime(2025, 2, 2, 10, 0)),
+            ListeningEvent("The National", "Trouble Will Find Me", "Slow Show", datetime(2025, 2, 3, 18, 0)),
+        ]
+
+        summary = build_wrapped_summary(events)
+
+        self.assertIn("research_signals", summary)
+        self.assertIn("taste_drift", summary)
+        self.assertIn("familiarity_curve", summary)
+        self.assertGreaterEqual(summary["taste_drift"], 0.0)
+        self.assertIsInstance(summary["familiarity_curve"], list)
 
     def test_local_json_audio_provider_matches_track_payloads_without_live_requests(self):
         from easywrapper.audio_enrichment import LocalJsonAudioClient
