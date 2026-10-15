@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 
+from matplotlib import pyplot as plt
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import (Image, Paragraph, SimpleDocTemplate, Spacer,
+                                Table, TableStyle)
 
 
 def _safe_value(value):
@@ -50,6 +53,22 @@ def _make_table(rows: list[list[str]], col_widths: list[float]) -> Table:
     return table
 
 
+def _chart_image(title: str, labels: list[str], values: list[int], color: str = "#1DB954") -> BytesIO:
+    fig, ax = plt.subplots(figsize=(5.2, 2.4))
+    ax.bar(labels, values, color=color)
+    ax.set_title(title, fontsize=9)
+    ax.grid(axis="y", alpha=0.2)
+    ax.set_axisbelow(True)
+    plt.setp(ax.get_xticklabels(), rotation=20, ha="right")
+    fig.tight_layout()
+
+    buffer = BytesIO()
+    fig.savefig(buffer, format="png", dpi=160, bbox_inches="tight")
+    plt.close(fig)
+    buffer.seek(0)
+    return buffer
+
+
 def generate_report(summary: dict, output_path: str | Path) -> Path:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -83,9 +102,19 @@ def generate_report(summary: dict, output_path: str | Path) -> Path:
         spaceBefore=12,
         spaceAfter=8,
     )
+    body_style = ParagraphStyle(
+        "BodySmall",
+        parent=styles["BodyText"],
+        fontName="Helvetica",
+        fontSize=9,
+        leading=12,
+        textColor=colors.HexColor("#374151"),
+    )
 
     first_seen = summary.get("listening_window", {}).get("first") or "N/A"
     last_seen = summary.get("listening_window", {}).get("last") or "N/A"
+    time_analysis = summary.get("time_analysis") or {}
+    monthly_trend = summary.get("monthly_trend") or []
 
     story = []
     story.append(Paragraph("YOUR WRAPPED", title_style))
@@ -115,6 +144,41 @@ def generate_report(summary: dict, output_path: str | Path) -> Path:
         )
         story.append(cards[-1])
         story.append(Spacer(1, 12))
+
+    if time_analysis:
+        story.append(Paragraph("LISTENING PATTERNS", section_style))
+        peak_hour = time_analysis.get("peak_hour") or "N/A"
+        peak_hour_count = time_analysis.get("peak_hour_count", 0)
+        day_part = time_analysis.get("day_part") or "N/A"
+        avg_per_day = time_analysis.get("avg_tracks_per_day", 0)
+        hourly_distribution = time_analysis.get("hourly_distribution") or []
+        weekday_distribution = time_analysis.get("day_of_week") or {}
+        insight_rows = [["Metric", "Value"], ["Peak hour", f"{peak_hour} ({peak_hour_count} plays)"], ["Day part", day_part], ["Avg/day", str(avg_per_day)], ["Most active weekday", next(iter(weekday_distribution.items()), ("N/A", 0))[0] if weekday_distribution else "N/A"]]
+        story.append(_make_table(insight_rows, [2.2 * inch, 3.6 * inch]))
+        story.append(Spacer(1, 10))
+
+        if hourly_distribution:
+            labels = [entry.get("hour", "") for entry in hourly_distribution[:12]]
+            values = [int(entry.get("count", 0)) for entry in hourly_distribution[:12]]
+            chart_buffer = _chart_image("Hourly listening pattern", labels, values)
+            story.append(Image(chart_buffer, width=5.2 * inch, height=2.4 * inch))
+            story.append(Spacer(1, 10))
+
+        if weekday_distribution:
+            weekday_rows = [["Day", "Plays"]]
+            for day, plays in list(weekday_distribution.items())[:7]:
+                weekday_rows.append([day, str(plays)])
+            story.append(Paragraph("BY DAY OF WEEK", section_style))
+            story.append(_make_table(weekday_rows, [2.3 * inch, 2.4 * inch]))
+            story.append(Spacer(1, 12))
+
+    if monthly_trend:
+        story.append(Paragraph("MONTHLY TREND", section_style))
+        trend_labels = [entry.get("month", "") for entry in monthly_trend[-6:]]
+        trend_values = [int(entry.get("plays", 0)) for entry in monthly_trend[-6:]]
+        trend_chart = _chart_image("Monthly listening trend", trend_labels, trend_values, color="#34D399")
+        story.append(Image(trend_chart, width=5.2 * inch, height=2.4 * inch))
+        story.append(Spacer(1, 10))
 
     story.append(Paragraph("TOP ARTISTS", section_style))
     artist_rows = [["Rank", "Artist", "Plays"]]

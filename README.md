@@ -1,6 +1,6 @@
 # easyWrapper
 
-A minimal wrapped-style analytics project for CSV listening history, inspired by Spotify and Last.fm. It reads a CSV like the sample at the repo root, calculates top artists and tracks, and saves a polished PDF report that feels like a Spotify Wrapped summary.
+A minimal wrapped-style analytics project for CSV listening history. It reads a CSV like the sample at the repo root, calculates top artists and tracks, and can output either a polished PDF report or an interactive HTML dashboard with filterable ranges and popup details.
 
 The repo is intentionally built to accept the sample export format that does not include a header row. Each row is expected to be: artist, album, track, timestamp.
 
@@ -13,14 +13,6 @@ The repo is intentionally small and opinionated:
 - It avoids heavy ML dependencies.
 - It produces a wrapped-style PDF report rather than a notebook-first workflow.
 - It supports optional metadata enrichment from Spotify when you have developer credentials.
-
-## Research notes
-
-For a bare-minimum API option, Spotify is the best fit:
-
-- Spotify Search API can look up a track by artist + track name.
-- Spotify Audio Features API exposes tempo, danceability, energy, valence, acousticness, speechiness, instrumentalness, and more.
-- There is no official "melodic complexity" field in Spotify. The project approximates a simple heuristic from available feature values.
 
 ## Project structure
 
@@ -45,30 +37,30 @@ python main.py coletoliva.csv
 
 This generates a PDF file next to the CSV, such as `coletoliva_wrapped_report.pdf`.
 
-## Optional Spotify enrichment
-
-Set these environment variables or copy `.env.example`:
+To generate an interactive browser report instead:
 
 ```bash
-SPOTIFY_CLIENT_ID=your_client_id
-SPOTIFY_CLIENT_SECRET=your_client_secret
+python main.py coletoliva.csv --html --open-browser
 ```
 
-Then run:
+This opens a browser-based wrapped dashboard where you can:
+
+- change the reporting window by month range
+- compare top artists and tracks across different periods
+- view the most active times of day and weekly behavior
+- inspect individual artists/tracks in a popup panel
+
+## Personal-use Spotify enrichment
+
+If you want to enrich your own listening history with Spotify audio features, keep the credentials local and private. Add them to a `.env` file in the project root (or export them in your shell), then run:
 
 ```bash
 python main.py coletoliva.csv --enrich --output wrapped.pdf
 ```
 
-This will try to match each song against the Spotify catalog and fetch audio features such as:
+This is intended for your own private use and should not be committed to source control. The project automatically reads a local `.env` file if present.
 
-- tempo
-- danceability
-- energy
-- valence
-- acousticness
-- speechiness
-- instrumentalness
+The Spotify enrichment is optional and works as a private improvement layer for your personal wrapped report.
 
 ## Example output
 

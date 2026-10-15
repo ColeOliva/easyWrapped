@@ -1,9 +1,28 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Iterable, List
 
 import requests
+
+
+def _load_local_spotify_env() -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    candidates = [project_root / ".env", Path.cwd() / ".env"]
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        for raw_line in candidate.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = [part.strip() for part in line.split("=", 1)]
+            if key and key not in os.environ:
+                os.environ[key] = value.strip().strip("\"'")
+
+
+_load_local_spotify_env()
 
 
 class SpotifyAudioClient:
@@ -13,7 +32,7 @@ class SpotifyAudioClient:
 
         if not self.client_id or not self.client_secret:
             raise ValueError(
-                "Spotify credentials are missing. Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET or pass them explicitly."
+                "Spotify credentials are missing. Add them to a local .env file in the project root or pass SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET explicitly."
             )
 
         self._token: str | None = None

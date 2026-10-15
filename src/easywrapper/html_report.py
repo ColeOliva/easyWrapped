@@ -1,0 +1,366 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+
+def _format_svg_bar_chart(title: str, labels: list[str], values: list[int], color: str = "#1DB954") -> str:
+    if not labels or not values:
+        return f"<div class='empty-chart'><strong>{title}</strong><p>No data in this range.</p></div>"
+
+    max_value = max(values) or 1
+    width = 540
+    height = 210
+    chart_height = 150
+    bar_width = max(30, (width - 80) // max(len(labels), 1))
+    bars = []
+
+    for index, (label, value) in enumerate(zip(labels, values)):
+        x = 40 + index * (bar_width + 12)
+        bar_height = max(8, (value / max_value) * chart_height)
+        y = height - 20 - bar_height
+        bars.append(
+            f"<g><rect x='{x}' y='{y}' width='{bar_width}' height='{bar_height}' rx='4' fill='{color}'/>"
+            f"<text x='{x + bar_width / 2}' y='{height - 4}' text-anchor='middle' font-size='10' fill='#374151'>{label}</text>"
+            f"<text x='{x + bar_width / 2}' y='{y - 6}' text-anchor='middle' font-size='9' fill='#111827'>{value}</text></g>"
+        )
+
+    return (
+        f"<div class='chart-panel'><h3>{title}</h3>"
+        f"<svg viewBox='0 0 {width} {height}' width='100%' height='210'>"
+        f"<line x1='30' y1='170' x2='{width - 10}' y2='170' stroke='#D1D5DB'/>"
+        f"{''.join(bars)}</svg></div>"
+    )
+
+
+def _render_table(title: str, rows: list[dict], columns: list[str], key_field: str = "label") -> str:
+    if not rows:
+        return f"<div class='table-panel'><h3>{title}</h3><p>No data available.</p></div>"
+
+    header = "".join(f"<th>{column}</th>" for column in columns)
+    body = []
+    for row in rows[:10]:
+        cells = []
+        for column in columns:
+            value = row.get(column.lower().replace(" ", "_"), row.get(column.lower(), row.get(key_field, "")))
+            if isinstance(value, (int, float)):
+                value = str(value)
+            cells.append(f"<td>{value}</td>")
+        body.append(f"<tr>{''.join(cells)}</tr>")
+
+    return (
+        f"<div class='table-panel'><h3>{title}</h3><table><thead><tr>{header}</tr></thead><tbody>{''.join(body)}</tbody></table></div>"
+    )
+
+
+def generate_html_report(summary: dict, events: list[dict], output_path: str | Path) -> Path:
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    events_json = json.dumps(events, ensure_ascii=False)
+    summary_json = json.dumps(summary, ensure_ascii=False)
+
+    html = """<!doctype html>
+<html lang='en'>
+  <head>
+    <meta charset='utf-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1'>
+    <title>Your Wrapped</title>
+    <style>
+      :root {
+        --bg: #f4f7fb;
+        --panel: #ffffff;
+        --panel-alt: #f9fafb;
+        --text: #111827;
+        --muted: #6b7280;
+        --accent: #1DB954;
+        --accent-soft: #d9f7e7;
+        --shadow: rgba(17,24,39,0.08);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; font-family: Arial, sans-serif; background: var(--bg); color: var(--text);
+      }
+      .wrap { max-width: 1180px; margin: 0 auto; padding: 28px 20px 50px; }
+      .hero { background: linear-gradient(135deg, #0f172a, #1f2937); color: white; border-radius: 24px; padding: 28px; box-shadow: var(--shadow); }
+      .hero h1 { margin: 0 0 10px; font-size: 42px; letter-spacing: 0.04em; }
+      .hero p { margin: 0; color: #dbeafe; }
+      .filters { display: flex; flex-wrap: wrap; gap: 14px; align-items: end; margin: 24px 0; background: var(--panel); padding: 18px; border-radius: 18px; box-shadow: var(--shadow); }
+      .field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
+      .field input, .field select { border: 1px solid #d1d5db; border-radius: 10px; padding: 10px 12px; font-size: 14px; background: white; }
+      button { background: var(--accent); border: none; color: white; border-radius: 10px; padding: 10px 16px; font-weight: 700; cursor: pointer; }
+      .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 22px 0; }
+      .stat-card { background: var(--panel); border-radius: 18px; padding: 18px; box-shadow: var(--shadow); }
+      .stat-card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+      .stat-card .value { font-size: 30px; font-weight: 800; margin-top: 8px; }
+      .grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 18px; margin-top: 20px; }
+      .chart-panel, .table-panel, .insights { background: var(--panel); border-radius: 18px; padding: 18px; box-shadow: var(--shadow); }
+      .chart-panel h3, .table-panel h3, .insights h3 { margin-top: 0; margin-bottom: 12px; }
+      table { width: 100%; border-collapse: collapse; font-size: 14px; }
+      th, td { padding: 10px; border-bottom: 1px solid #e5e7eb; text-align: left; }
+      th { background: #f3f4f6; color: var(--muted); }
+      .empty-chart { background: var(--panel-alt); border: 1px dashed #d1d5db; border-radius: 12px; padding: 24px; color: var(--muted); text-align: center; }
+      .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 50; }
+      .modal.open { display: flex; align-items: center; justify-content: center; }
+      .modal-card { background: white; width: min(520px, 90vw); border-radius: 18px; padding: 20px; box-shadow: var(--shadow); }
+      .modal-card h2 { margin-top: 0; }
+      .close-btn { float: right; background: none; color: var(--text); font-size: 22px; border: none; }
+      @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } .hero h1 { font-size: 30px; } }
+    </style>
+  </head>
+  <body>
+    <div class='wrap'>
+      <div class='hero'>
+        <h1>YOUR WRAPPED</h1>
+        <p id='rangeLabel'>Loading listening range…</p>
+      </div>
+
+      <div class='filters'>
+        <div class='field'>
+          <label for='startMonth'>Start month</label>
+          <select id='startMonth'></select>
+        </div>
+        <div class='field'>
+          <label for='endMonth'>End month</label>
+          <select id='endMonth'></select>
+        </div>
+        <div class='field'>
+          <label for='topN'>Top results</label>
+          <select id='topN'>
+            <option value='5'>5</option>
+            <option value='10'>10</option>
+            <option value='15'>15</option>
+          </select>
+        </div>
+        <button id='applyFilters'>Update report</button>
+      </div>
+
+      <div class='stats' id='statsGrid'></div>
+
+      <div class='grid'>
+        <div id='monthChart'></div>
+        <div id='insightsPanel'></div>
+      </div>
+
+      <div class='grid' style='margin-top: 18px;'>
+        <div id='artistTable'></div>
+        <div id='trackTable'></div>
+      </div>
+    </div>
+
+    <div id='detailModal' class='modal'>
+      <div class='modal-card'>
+        <button class='close-btn' id='closeModal' aria-label='Close'>×</button>
+        <h2 id='modalTitle'>Details</h2>
+        <div id='modalBody'></div>
+      </div>
+    </div>
+
+    <script>
+      const allEvents = __EVENTS_JSON__;
+      const baseSummary = __SUMMARY_JSON__;
+      const allMonths = [...new Set(allEvents.map(event => event.timestamp.slice(0, 7)))].sort();
+      const startMonthSelect = document.getElementById('startMonth');
+      const endMonthSelect = document.getElementById('endMonth');
+      const statsGrid = document.getElementById('statsGrid');
+      const monthChart = document.getElementById('monthChart');
+      const insightsPanel = document.getElementById('insightsPanel');
+      const artistTable = document.getElementById('artistTable');
+      const trackTable = document.getElementById('trackTable');
+      const modal = document.getElementById('detailModal');
+      const modalTitle = document.getElementById('modalTitle');
+      const modalBody = document.getElementById('modalBody');
+
+      function populateMonths() {
+        const options = allMonths.map(month => `<option value="${month}">${month}</option>`).join('');
+        startMonthSelect.innerHTML = options;
+        endMonthSelect.innerHTML = options;
+        startMonthSelect.value = allMonths[0];
+        endMonthSelect.value = allMonths[allMonths.length - 1];
+      }
+
+      function filterEvents(startMonth, endMonth) {
+        const start = new Date(`${startMonth}-01T00:00:00`);
+        const end = new Date(`${endMonth}-12-31T23:59:59`);
+        return allEvents.filter(event => {
+          const ts = new Date(event.timestamp);
+          return ts >= start && ts <= end;
+        });
+      }
+
+      function buildSummary(events) {
+        const artistMap = new Map();
+        const trackMap = new Map();
+        const monthMap = new Map();
+        const hourMap = new Map();
+        const weekdayMap = new Map();
+
+        for (const event of events) {
+          const artist = event.artist || 'Unknown';
+          const track = event.track || 'Unknown';
+          const month = event.timestamp.slice(0, 7);
+          const dt = new Date(event.timestamp);
+          const hour = dt.getHours();
+          const weekday = dt.toLocaleDateString('en-US', { weekday: 'long' });
+
+          artistMap.set(artist, (artistMap.get(artist) || 0) + 1);
+          trackMap.set(`${artist}::${track}`, (trackMap.get(`${artist}::${track}`) || 0) + 1);
+          monthMap.set(month, (monthMap.get(month) || 0) + 1);
+          hourMap.set(hour, (hourMap.get(hour) || 0) + 1);
+          weekdayMap.set(weekday, (weekdayMap.get(weekday) || 0) + 1);
+        }
+
+        const topArtists = [...artistMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([artist, plays]) => ({ artist, plays }));
+        const topTracks = [...trackMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([key, plays]) => {
+          const [artist, track] = key.split('::');
+          return { artist, track, plays };
+        });
+
+        const hourlyDistribution = [...Array(24).keys()].map(hour => ({ hour: hour.toString().padStart(2, '0') + ':00', count: hourMap.get(hour) || 0 }));
+        const dayOfWeek = [...weekdayMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 7).reduce((acc, [day, plays]) => (acc[day] = plays, acc), {});
+        const peakHour = hourlyDistribution.reduce((best, current) => current.count > best.count ? current : best, { hour: '00:00', count: 0 });
+        const monthTrend = [...monthMap.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([month, plays]) => ({ month, plays }));
+
+        return {
+          total_tracks: events.length,
+          unique_artists: artistMap.size,
+          top_artists: topArtists,
+          top_tracks: topTracks,
+          most_active_day: [...weekdayMap.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A',
+          listening_window: events.length ? {
+            first: new Date(Math.min(...events.map(event => new Date(event.timestamp).getTime()))).toISOString(),
+            last: new Date(Math.max(...events.map(event => new Date(event.timestamp).getTime()))).toISOString()
+          } : { first: null, last: null },
+          time_analysis: {
+            peak_hour: peakHour.hour,
+            peak_hour_count: peakHour.count,
+            day_part: peakHour.hour >= '17:00' ? 'Evening' : peakHour.hour >= '12:00' ? 'Afternoon' : peakHour.hour >= '05:00' ? 'Morning' : 'Night',
+            day_of_week: dayOfWeek,
+            hourly_distribution: hourlyDistribution,
+            avg_tracks_per_day: events.length ? Number((events.length / new Set(events.map(event => event.timestamp.slice(0, 10))).size).toFixed(2)) : 0,
+            unique_days: new Set(events.map(event => event.timestamp.slice(0, 10))).size
+          },
+          monthly_trend: monthTrend,
+          audio_features: baseSummary.audio_features || []
+        };
+      }
+
+      function renderStats(summary) {
+        const cards = [
+          ['Total listens', summary.total_tracks],
+          ['Unique artists', summary.unique_artists],
+          ['Top artist', summary.top_artists[0]?.artist || 'N/A'],
+          ['Most active day', summary.most_active_day || 'N/A']
+        ];
+        statsGrid.innerHTML = cards.map(([label, value]) => `<div class='stat-card'><div class='label'>${label}</div><div class='value'>${value}</div></div>`).join('');
+      }
+
+      function renderMonthChart(summary) {
+        const trend = summary.monthly_trend || [];
+        const labels = trend.slice(-6).map(item => item.month.slice(5));
+        const values = trend.slice(-6).map(item => item.plays);
+        monthChart.innerHTML = _renderBarChart('Monthly trend', labels, values, '#34D399');
+      }
+
+      function renderInsights(summary) {
+        const time = summary.time_analysis || {};
+        const insights = [
+          ['Peak hour', `${time.peak_hour || 'N/A'} (${time.peak_hour_count || 0} plays)`],
+          ['Most active weekday', Object.entries(time.day_of_week || {}).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A'],
+          ['Average/day', String(time.avg_tracks_per_day || 0)],
+          ['Day part', time.day_part || 'N/A']
+        ];
+        insightsPanel.innerHTML = `<div class='insights'><h3>Listening insights</h3><table>${insights.map(([label, value]) => `<tr><th>${label}</th><td>${value}</td></tr>`).join('')}</table></div>`;
+      }
+
+      function renderTables(summary, topN) {
+        const artists = (summary.top_artists || []).slice(0, topN).map((item, index) => ({ rank: index + 1, artist: item.artist, plays: item.plays }));
+        const tracks = (summary.top_tracks || []).slice(0, topN).map(item => ({ artist: item.artist, track: item.track, plays: item.plays }));
+        artistTable.innerHTML = _renderTable('Top artists', artists, ['Rank', 'Artist', 'Plays'], 'artist');
+        trackTable.innerHTML = _renderTable('Top tracks', tracks, ['Artist', 'Track', 'Plays'], 'track');
+
+        document.querySelectorAll('#artistTable tbody tr[data-kind="artist"]').forEach(row => {
+          row.addEventListener('click', () => {
+            const artist = row.dataset.value;
+            const plays = row.dataset.plays;
+            modalTitle.textContent = artist;
+            modalBody.innerHTML = `<p><strong>Plays:</strong> ${plays}</p><p>Explore this artist within the selected reporting window.</p>`;
+            modal.classList.add('open');
+          });
+        });
+
+        document.querySelectorAll('#trackTable tbody tr[data-kind="track"]').forEach(row => {
+          row.addEventListener('click', () => {
+            const artist = row.dataset.artist;
+            const track = row.dataset.track;
+            const plays = row.dataset.plays;
+            modalTitle.textContent = `${artist} — ${track}`;
+            modalBody.innerHTML = `<p><strong>Plays:</strong> ${plays}</p><p>Use the date filters to expand or narrow the range for this song.</p>`;
+            modal.classList.add('open');
+          });
+        });
+      }
+
+      function _renderTable(title, rows, columns, kind) {
+        if (!rows.length) {
+          return `<div class='table-panel'><h3>${title}</h3><p>No data available.</p></div>`;
+        }
+        const header = columns.map(column => `<th>${column}</th>`).join('');
+        const body = rows.map((row) => {
+          const cells = columns.map((column) => `<td>${row[column.toLowerCase().replace(/ /g, '_')] ?? row[column.toLowerCase()] ?? row[Object.keys(row)[0]]}</td>`).join('');
+          if (kind === 'artist') {
+            return `<tr data-kind='artist' data-value='${row.artist}' data-plays='${row.plays}' style='cursor:pointer'>${cells}</tr>`;
+          }
+          return `<tr data-kind='track' data-artist='${row.artist}' data-track='${row.track}' data-plays='${row.plays}' style='cursor:pointer'>${cells}</tr>`;
+        }).join('');
+        return `<div class='table-panel'><h3>${title}</h3><table><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table></div>`;
+      }
+
+      function _renderBarChart(title, labels, values, color) {
+        if (!labels.length) { return `<div class='empty-chart'><strong>${title}</strong><p>No data in this range.</p></div>`; }
+        const maxValue = Math.max(...values, 1);
+        const width = 540;
+        const height = 220;
+        const chartHeight = 130;
+        const barWidth = Math.max(36, (width - 80) / labels.length);
+        let bars = '';
+
+        labels.forEach((label, index) => {
+          const value = values[index] || 0;
+          const x = 40 + index * (barWidth + 12);
+          const barHeight = Math.max(10, (value / maxValue) * chartHeight);
+          const y = height - 35 - barHeight;
+          bars += `<g><rect x='${x}' y='${y}' width='${barWidth}' height='${barHeight}' rx='4' fill='${color}'/><text x='${x + barWidth / 2}' y='${height - 12}' text-anchor='middle' font-size='10' fill='#374151'>${label}</text><text x='${x + barWidth / 2}' y='${y - 5}' text-anchor='middle' font-size='9' fill='#111827'>${value}</text></g>`;
+        });
+
+        return `<div class='chart-panel'><h3>${title}</h3><svg viewBox='0 0 ${width} ${height}' width='100%' height='220'><line x1='30' y1='170' x2='${width - 12}' y2='170' stroke='#D1D5DB'/><g>${bars}</g></svg></div>`;
+      }
+
+      function updateReport() {
+        const start = startMonthSelect.value;
+        const end = endMonthSelect.value;
+        const topN = Number(document.getElementById('topN').value || 5);
+        const selectedEvents = filterEvents(start, end);
+        const summary = buildSummary(selectedEvents);
+        document.getElementById('rangeLabel').textContent = `Showing ${start} to ${end} · ${summary.total_tracks} listens`;
+        renderStats(summary);
+        renderMonthChart(summary);
+        renderInsights(summary);
+        renderTables(summary, topN);
+      }
+
+      document.getElementById('applyFilters').addEventListener('click', updateReport);
+      document.getElementById('closeModal').addEventListener('click', () => modal.classList.remove('open'));
+      modal.addEventListener('click', (event) => { if (event.target === modal) modal.classList.remove('open'); });
+
+      populateMonths();
+      updateReport();
+    </script>
+  </body>
+</html>
+"""
+
+    html = html.replace("__EVENTS_JSON__", events_json)
+    html = html.replace("__SUMMARY_JSON__", summary_json)
+    output_path.write_text(html, encoding="utf-8")
+    return output_path
