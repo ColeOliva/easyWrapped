@@ -197,19 +197,19 @@ def generate_report(summary: dict, output_path: str | Path) -> Path:
     audio_features = summary.get("audio_features") or []
     if audio_features:
         story.append(Paragraph("AUDIO VIBES", section_style))
-        feature_rows = [["Track", "Snapshot"]]
-        for feature in audio_features[:3]:
+        feature_rows = [["Artist", "Track", "Tempo", "Energy", "Dance", "Valence"]]
+        for feature in audio_features[:5]:
             feature_rows.append(
                 [
+                    feature.get("artist", "N/A"),
                     feature.get("track", "N/A"),
-                    (
-                        f"tempo {feature.get('tempo', 'N/A')} • "
-                        f"danceability {feature.get('danceability', 'N/A')} • "
-                        f"energy {feature.get('energy', 'N/A')}"
-                    ),
+                    str(feature.get("tempo", "N/A")),
+                    str(feature.get("energy", "N/A")),
+                    str(feature.get("danceability", "N/A")),
+                    str(feature.get("valence", "N/A")),
                 ]
             )
-        story.append(_make_table(feature_rows, [1.8 * inch, 3.8 * inch]))
+        story.append(_make_table(feature_rows, [1.5 * inch, 1.7 * inch, 0.8 * inch, 0.8 * inch, 0.8 * inch, 0.8 * inch]))
 
     doc = SimpleDocTemplate(
         str(output_path),

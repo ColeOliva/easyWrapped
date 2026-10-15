@@ -84,6 +84,11 @@
         <div id='artistTable'></div>
         <div id='trackTable'></div>
       </div>
+
+      <div class='grid' style='margin-top: 18px;'>
+        <div id='audioVibes'></div>
+        <div></div>
+      </div>
     </div>
 
     <div id='detailModal' class='modal'>
@@ -118,8 +123,10 @@
       }
 
       function filterEvents(startMonth, endMonth) {
-        const start = new Date(`${startMonth}-01T00:00:00`);
-        const end = new Date(`${endMonth}-12-31T23:59:59`);
+        const [startYear, startMonthIndex] = startMonth.split('-').map(Number);
+        const [endYear, endMonthIndex] = endMonth.split('-').map(Number);
+        const start = new Date(startYear, startMonthIndex - 1, 1, 0, 0, 0, 0);
+        const end = new Date(endYear, endMonthIndex, 0, 23, 59, 59, 999);
         return allEvents.filter(event => {
           const ts = new Date(event.timestamp);
           return ts >= start && ts <= end;
@@ -132,6 +139,12 @@
         const monthMap = new Map();
         const hourMap = new Map();
         const weekdayMap = new Map();
+        const audioFeatureMap = new Map();
+
+        for (const feature of (baseSummary.audio_features || [])) {
+          const key = `${(feature.artist || '').toLowerCase()}::${(feature.track || '').toLowerCase()}`;
+          if (key) audioFeatureMap.set(key, feature);
+        }
 
         for (const event of events) {
           const artist = event.artist || 'Unknown';
@@ -159,6 +172,15 @@
         const peakHour = hourlyDistribution.reduce((best, current) => current.count > best.count ? current : best, { hour: '00:00', count: 0 });
         const monthTrend = [...monthMap.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([month, plays]) => ({ month, plays }));
 
+        const audioFeatures = [];
+        const seenAudioKeys = new Set();
+        for (const event of events) {
+          const key = `${(event.artist || '').toLowerCase()}::${(event.track || '').toLowerCase()}`;
+          if (!audioFeatureMap.has(key) || seenAudioKeys.has(key)) continue;
+          seenAudioKeys.add(key);
+          audioFeatures.push(audioFeatureMap.get(key));
+        }
+
         return {
           total_tracks: events.length,
           unique_artists: artistMap.size,
@@ -179,16 +201,29 @@
             unique_days: new Set(events.map(event => event.timestamp.slice(0, 10))).size
           },
           monthly_trend: monthTrend,
-          audio_features: baseSummary.audio_features || []
+          audio_features: audioFeatures
         };
       }
 
+      function formatRangeLabel(firstValue, lastValue) {
+        if (!firstValue || !lastValue) return 'No listening window yet';
+        const start = new Date(firstValue);
+        const end = new Date(lastValue);
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 'No listening window yet';
+        const format = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        return `${format.format(start)} → ${format.format(end)}`;
+      }
+
       function renderStats(summary) {
+        const avgPerDay = Number(summary.time_analysis?.avg_tracks_per_day || 0);
+        const topTrack = summary.top_tracks?.[0];
         const cards = [
           ['Total listens', summary.total_tracks],
           ['Unique artists', summary.unique_artists],
           ['Top artist', summary.top_artists[0]?.artist || 'N/A'],
-          ['Most active day', summary.most_active_day || 'N/A']
+          ['Avg/day', avgPerDay.toFixed(1)],
+          ['Peak hour', summary.time_analysis?.peak_hour || 'N/A'],
+          ['Top track', topTrack ? `${topTrack.track} · ${topTrack.artist}` : 'N/A']
         ];
         statsGrid.innerHTML = cards.map(([label, value]) => `<div class='stat-card'><div class='label'>${label}</div><div class='value'>${value}</div></div>`).join('');
       }
@@ -202,13 +237,38 @@
 
       function renderInsights(summary) {
         const time = summary.time_analysis || {};
+        const audio = (summary.audio_features || []).slice(0, 3);
+        const topTrack = summary.top_tracks?.[0];
+        const topArtist = summary.top_artists?.[0];
+        const share = summary.total_tracks ? Math.round(((topArtist?.plays || 0) / summary.total_tracks) * 100) : 0;
         const insights = [
           ['Peak hour', `${time.peak_hour || 'N/A'} (${time.peak_hour_count || 0} plays)`],
           ['Most active weekday', Object.entries(time.day_of_week || {}).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A'],
           ['Average/day', String(time.avg_tracks_per_day || 0)],
-          ['Day part', time.day_part || 'N/A']
+          ['Top track', topTrack ? `${topTrack.track} (${topTrack.plays} plays)` : 'N/A'],
+          ['Listening window', formatRangeLabel(summary.listening_window?.first, summary.listening_window?.last)],
+          ['Top artist share', `${share}%`]
         ];
-        insightsPanel.innerHTML = `<div class='insights'><h3>Listening insights</h3><table>${insights.map(([label, value]) => `<tr><th>${label}</th><td>${value}</td></tr>`).join('')}</table></div>`;
+        const audioRows = audio.length ? audio.map(item => `<tr><th>${item.track || 'Track'}</th><td>tempo ${item.tempo ?? 'N/A'} / energy ${item.energy ?? 'N/A'}</td></tr>`).join('') : '<tr><th>Local metrics</th><td>Audio analysis data is unavailable for this report. The dashboard still shows your live listening patterns from the CSV.</td></tr>';
+        insightsPanel.innerHTML = `<div class='insights'><h3>Listening insights</h3><table>${insights.map(([label, value]) => `<tr><th>${label}</th><td>${value}</td></tr>`).join('')}</table><h3 style='margin-top:18px;'>Audio summary</h3><table>${audioRows}</table></div>`;
+      }
+
+      function renderAudioVibes(summary) {
+        const audio = summary.audio_features || [];
+        const container = document.getElementById('audioVibes');
+        if (!audio.length) {
+          container.innerHTML = `<div class='table-panel'><h3>Spotify audio vibes</h3><p>Spotify audio data is unavailable for this run. This usually means the API request was rate-limited or blocked before response data was returned.</p></div>`;
+          return;
+        }
+        const rows = audio.slice(0, 5).map(item => ({
+          artist: item.artist || 'Unknown',
+          track: item.track || 'Unknown',
+          tempo: item.tempo ?? 'N/A',
+          energy: item.energy ?? 'N/A',
+          danceability: item.danceability ?? 'N/A',
+          valence: item.valence ?? 'N/A'
+        }));
+        container.innerHTML = _renderTable('Spotify audio vibes', rows, ['Artist', 'Track', 'Tempo', 'Energy', 'Danceability', 'Valence'], 'audio');
       }
 
       function renderTables(summary, topN) {
@@ -280,10 +340,11 @@
         const topN = Number(document.getElementById('topN').value || 5);
         const selectedEvents = filterEvents(start, end);
         const summary = buildSummary(selectedEvents);
-        document.getElementById('rangeLabel').textContent = `Showing ${start} to ${end} · ${summary.total_tracks} listens`;
+        document.getElementById('rangeLabel').textContent = `Showing ${start} to ${end} · ${summary.total_tracks} listens · ${summary.top_artists[0]?.artist || 'No clear leader'}`;
         renderStats(summary);
         renderMonthChart(summary);
         renderInsights(summary);
+        renderAudioVibes(summary);
         renderTables(summary, topN);
       }
 

@@ -140,7 +140,7 @@ def _build_monthly_trend(events: List[ListeningEvent]) -> list[dict]:
     ]
 
 
-def build_wrapped_summary(events: Iterable[ListeningEvent], spotify_client=None):
+def build_wrapped_summary(events: Iterable[ListeningEvent], spotify_client=None, audio_client=None):
     events = list(events)
 
     if not events:
@@ -181,7 +181,8 @@ def build_wrapped_summary(events: Iterable[ListeningEvent], spotify_client=None)
         "audio_features": [],
     }
 
-    if spotify_client is not None:
-        summary["audio_features"] = spotify_client.enrich_tracks(events)
+    provider = audio_client or spotify_client
+    if provider is not None:
+        summary["audio_features"] = provider.enrich_tracks(events)
 
     return summary

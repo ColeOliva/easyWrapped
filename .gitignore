@@ -1,6 +1,11 @@
 .venv/
 __pycache__/
 *.pyc
+*.pyo
 .env
-.venv/
 .DS_Store
+.pytest_cache/
+*_wrapped_report.html
+*_wrapped_report.pdf
+tmp_*.html
+wrapped.pdf

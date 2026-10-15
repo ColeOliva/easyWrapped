@@ -10,10 +10,10 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from easywrapper.audio_enrichment import create_audio_client
 from easywrapper.html_report import generate_html_report
 from easywrapper.loader import build_wrapped_summary, load_listening_history
 from easywrapper.report_generator import generate_report
-from easywrapper.spotify_client import SpotifyAudioClient
 
 
 def parse_args():
@@ -39,7 +39,36 @@ def parse_args():
     parser.add_argument(
         "--enrich",
         action="store_true",
-        help="Optionally enrich tracks with personal-use Spotify audio features from a local .env file or explicit credentials.",
+        help="Optionally enrich tracks with audio features using the configured provider (Spotify or Freqblog).",
+    )
+    parser.add_argument(
+        "--audio-provider",
+        choices=["spotify", "freqblog", "local"],
+        default=os.getenv("AUDIO_PROVIDER", "local"),
+        help="Audio-features provider to use for enrichment. Defaults to local/off unless --enrich is set.",
+    )
+    parser.add_argument(
+        "--freqblog-api-key",
+        default=os.getenv("FREQBLOG_API_KEY"),
+        help="Optional Freqblog API key. Only used when the Freqblog provider is selected.",
+    )
+    parser.add_argument(
+        "--top-artists",
+        type=int,
+        default=10,
+        help="Enrich the top N artists by play count, then choose up to --tracks-per-artist tracks from each artist.",
+    )
+    parser.add_argument(
+        "--tracks-per-artist",
+        type=int,
+        default=5,
+        help="How many tracks from each artist to enrich when using artist-first selection.",
+    )
+    parser.add_argument(
+        "--max-enrich",
+        type=int,
+        default=None,
+        help="Optional final cap on total enriched tracks. If omitted, it defaults to top_artists * tracks_per_artist.",
     )
     parser.add_argument(
         "--client-id",
@@ -62,16 +91,24 @@ def parse_args():
 def main():
     args = parse_args()
     events = load_listening_history(args.csv_path)
-    spotify_client = None
+    audio_client = None
 
     if args.enrich:
         try:
-            spotify_client = SpotifyAudioClient(args.client_id, args.client_secret)
+            audio_client = create_audio_client(
+                args.audio_provider,
+                api_key=args.freqblog_api_key,
+                client_id=args.client_id,
+                client_secret=args.client_secret,
+                max_tracks=args.max_enrich,
+                top_artists=args.top_artists,
+                tracks_per_artist=args.tracks_per_artist,
+            )
         except ValueError as exc:
-            print(f"Warning: Spotify enrichment skipped: {exc}")
-            spotify_client = None
+            print(f"Warning: audio enrichment skipped: {exc}")
+            audio_client = None
 
-    summary = build_wrapped_summary(events, spotify_client=spotify_client)
+    summary = build_wrapped_summary(events, audio_client=audio_client)
 
     if args.html:
         output_path = Path(args.output) if args.output else Path(args.csv_path).with_name(f"{Path(args.csv_path).stem}_wrapped_report.html")
